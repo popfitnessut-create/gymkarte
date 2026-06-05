@@ -1,0 +1,26 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html, body, #root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  font-family: 'Noto Sans JP', system-ui, sans-serif;
+  background-color: #ffffff;
+  color: #111827;
+}
+
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+
+/* 検索結果のキーワードハイライト */
+mark.hl {
+  background: #e3b341;
+  color: #111827;
+  border-radius: 2px;
+  padding: 0 1px;
+}

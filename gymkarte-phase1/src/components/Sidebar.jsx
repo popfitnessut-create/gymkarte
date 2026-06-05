@@ -1,0 +1,50 @@
+import { LayoutDashboard, Users, Dumbbell, Settings } from 'lucide-react'
+import { useStore } from '../store/useStore'
+
+const NAV = [
+  { key: 'dashboard', label: 'ダッシュボード', icon: LayoutDashboard },
+  { key: 'members', label: '会員一覧', icon: Users }
+]
+
+export default function Sidebar() {
+  const page = useStore((s) => s.page)
+  const navigate = useStore((s) => s.navigate)
+  const current = page === 'memberDetail' ? 'members' : page
+
+  return (
+    <aside className="flex w-60 flex-col border-r border-navy-700 bg-navy-800">
+      <div className="flex items-center gap-2 px-5 py-5 border-b border-navy-700">
+        <Dumbbell className="text-accent" size={26} />
+        <span className="text-xl font-bold tracking-wide">GymKarte</span>
+      </div>
+
+      <nav className="flex-1 px-3 py-4 space-y-1">
+        {NAV.map(({ key, label, icon: Icon }) => (
+          <button
+            key={key}
+            onClick={() => navigate(key)}
+            className={`flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition
+              ${current === key
+                ? 'bg-accent text-white'
+                : 'text-gray-300 hover:bg-navy-700 hover:text-white'}`}
+          >
+            <Icon size={18} />
+            {label}
+          </button>
+        ))}
+      </nav>
+
+      <div className="px-3 py-4 border-t border-navy-700">
+        <button
+          disabled
+          className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm text-gray-500 cursor-not-allowed"
+          title="Phase 5で実装予定"
+        >
+          <Settings size={18} />
+          設定
+        </button>
+        <p className="mt-3 px-3 text-[11px] text-gray-500">Phase 1 · v0.1.0</p>
+      </div>
+    </aside>
+  )
+}

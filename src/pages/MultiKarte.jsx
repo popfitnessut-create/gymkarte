@@ -1,0 +1,279 @@
+import { useEffect, useMemo, useState } from 'react'
+import { ArrowLeft, Save, ExternalLink, AlertTriangle, Copy, GripVertical, Check } from 'lucide-react'
+import { useStore } from '../store/useStore'
+import { ALL_MUSCLES } from '../components/BodyMap'
+import { fmtDate } from '../lib/format'
+
+const today = () => new Date().toISOString().slice(0, 10)
+
+// 各カードの入力初期状態
+const blankEntry = () => ({
+  // セッション
+  muscles: [], consume_ticket: true,
+  menuText: '',
+  // 日次カルテ（自由記述テキスト）
+  member_comment: ''
+})
+
+export default function MultiKarte() {
+  const ids = useStore((s) => s.multiIds)
+  const navigate = useStore((s) => s.navigate)
+  const openMember = useStore((s) => s.openMember)
+
+  const [cards, setCards] = useState([])           // 並び順を保持する会員配列
+  const [entries, setEntries] = useState({})       // memberId -> 入力state
+  const [presets, setPresets] = useState([])
+  const [trainer, setTrainer] = useState('')
+  const [trainers, setTrainers] = useState([])
+  const [saving, setSaving] = useState(false)
+  const [savedIds, setSavedIds] = useState([])
+  const [dragId, setDragId] = useState(null)
+
+  useEffect(() => {
+    window.api.members.cards(ids).then((rows) => {
+      setCards(rows)
+      const init = {}
+      rows.forEach((m) => { init[m.id] = blankEntry() })
+      setEntries(init)
+    })
+    window.api.presets.list().then(setPresets)
+    window.api.trainers.list().then(setTrainers)
+  }, [ids])
+
+  const cols = cards.length >= 5 ? 2 : Math.min(Math.max(cards.length, 1), 4)
+  const upd = (id, patch) => setEntries((e) => ({ ...e, [id]: { ...e[id], ...patch } }))
+
+  // 1枚のカードのメニューを全員にコピー
+  const copyMenuToAll = (srcId) => {
+    const src = entries[srcId]?.menuText || ''
+    setEntries((e) => {
+      const next = { ...e }
+      cards.forEach((m) => {
+        if (m.id === srcId) return
+        next[m.id] = { ...next[m.id], menuText: src }
+      })
+      return next
+    })
+  }
+
+  // D&D並べ替え
+  const onDrop = (targetId) => {
+    if (dragId == null || dragId === targetId) return
+    setCards((arr) => {
+      const from = arr.findIndex((m) => m.id === dragId)
+      const to = arr.findIndex((m) => m.id === targetId)
+      const copy = [...arr]
+      const [moved] = copy.splice(from, 1)
+      copy.splice(to, 0, moved)
+      return copy
+    })
+    setDragId(null)
+  }
+
+  // 入力のある会員だけ一括保存
+  const saveAll = async () => {
+    setSaving(true)
+    const saved = []
+    for (const m of cards) {
+      const e = entries[m.id]
+      const menuLines = (e.menuText || '').split('\n').map((l) => l.trim()).filter(Boolean)
+      const exercises = menuLines.map((line) => ({ exercise_name: line }))
+      const consume = m.plan_type === 'ticket' && e.consume_ticket
+      const hasSession = e.muscles.length || exercises.length || consume
+      const hasDaily = e.member_comment.trim()
+      if (hasSession) {
+        await window.api.sessions.create({
+          member_id: m.id, session_date: today(), participant_count: cards.length,
+          trainer_name: trainer || null, consume_ticket: consume,
+          muscles: e.muscles, exercises
+        })
+      }
+      if (hasDaily) {
+        await window.api.daily.save({
+          member_id: m.id, log_date: today(),
+          member_comment: e.member_comment
+        })
+      }
+      if (hasSession || hasDaily) saved.push(m.id)
+    }
+    setSaving(false)
+    setSavedIds(saved)
+    // 残回数を更新
+    window.api.members.cards(cards.map((m) => m.id)).then((rows) => {
+      const map = Object.fromEntries(rows.map((r) => [r.id, r]))
+      setCards((arr) => arr.map((m) => ({ ...m, remaining_count: map[m.id]?.remaining_count ?? m.remaining_count })))
+    })
+  }
+
+  if (cards.length === 0) return <div className="p-8 text-gray-400">読み込み中…</div>
+
+  return (
+    <div className="flex h-full flex-col">
+      <div className="flex items-center justify-between border-b border-navy-700 bg-navy-800 px-6 py-3">
+        <div className="flex items-center gap-4">
+          <button onClick={() => navigate('members')} className="flex items-center gap-1 text-sm text-gray-400 hover:text-gray-100">
+            <ArrowLeft size={16} /> 会員一覧
+          </button>
+          <h1 className="text-lg font-bold">マルチカルテ <span className="text-sm font-normal text-gray-400">{cards.length}名 同時記録</span></h1>
+        </div>
+        <div className="flex items-center gap-3">
+          <select value={trainer} onChange={(e) => setTrainer(e.target.value)} className="rounded-lg border border-navy-600 bg-navy-900 px-3 py-2 text-sm outline-none focus:border-accent">
+            <option value="">担当トレーナー（全員共通）</option>
+            {trainers.map((t) => <option key={t.id} value={t.name}>{t.name}</option>)}
+          </select>
+          <button onClick={saveAll} disabled={saving}
+            className="flex items-center gap-2 rounded-lg bg-accent px-5 py-2 text-sm font-medium text-white hover:opacity-90 disabled:opacity-50">
+            <Save size={16} /> {saving ? '保存中…' : '一括保存'}
+          </button>
+        </div>
+      </div>
+
+      <div className="flex-1 overflow-auto p-6">
+        <div className="grid gap-4" style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }}>
+          {cards.map((m) => (
+            <Card key={m.id} member={m} entry={entries[m.id]} presets={presets}
+              saved={savedIds.includes(m.id)}
+              onUpd={(p) => upd(m.id, p)}
+              onOpenFull={() => openMember(m.id)}
+              onCopyAll={() => copyMenuToAll(m.id)}
+              onDragStart={() => setDragId(m.id)}
+              onDropCard={() => onDrop(m.id)}
+            />
+          ))}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function Card({ member: m, entry: e, presets, saved, onUpd, onOpenFull, onCopyAll, onDragStart, onDropCard }) {
+  const low = m.remaining_count <= 3
+  const toggleMuscle = (n) => onUpd({ muscles: e.muscles.includes(n) ? e.muscles.filter((x) => x !== n) : [...e.muscles, n] })
+  // プリセット種目をメニュー末尾に1行追加
+  const addPreset = (name) => {
+    if (!name) return
+    const t = e.menuText || ''
+    onUpd({ menuText: t.trim() ? `${t.replace(/\n+$/, '')}\n${name}` : name })
+  }
+  const lastMenu = m.last_menu || []
+  const recent = m.recent || []
+
+  return (
+    <div
+      draggable
+      onDragStart={onDragStart}
+      onDragOver={(ev) => ev.preventDefault()}
+      onDrop={onDropCard}
+      className={`flex flex-col rounded-xl border bg-navy-800 ${low ? 'border-red-500/60' : 'border-navy-700'}`}
+    >
+      {/* ヘッダー（常時表示） */}
+      <div className="flex items-start justify-between gap-2 border-b border-navy-700 px-4 py-3">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <GripVertical size={14} className="shrink-0 cursor-grab text-gray-600" />
+            <span className="truncate font-bold">{m.name}</span>
+            {saved && <Check size={14} className="shrink-0 text-green-400" />}
+          </div>
+          <div className="mt-1 flex items-center gap-2 text-[11px] text-gray-400">
+            <span className={low ? 'flex items-center gap-0.5 font-semibold text-red-400' : ''}>
+              {low && <AlertTriangle size={11} />}残{m.remaining_count}回
+            </span>
+            <span>前回 {fmtDate(m.last_visit)}</span>
+          </div>
+        </div>
+        <button onClick={onOpenFull} title="フルカルテを開く" className="shrink-0 text-gray-400 hover:text-accent">
+          <ExternalLink size={15} />
+        </button>
+      </div>
+
+      {/* 前回メモ */}
+      {m.last_next_memo && (
+        <div className="border-b border-navy-700 bg-navy-900/40 px-4 py-2 text-[11px] text-gray-400">
+          <span className="text-gray-500">前回メモ: </span>{m.last_next_memo}
+        </div>
+      )}
+
+      <div className="flex-1 space-y-3 p-4 text-xs">
+        {/* 鍛えた部位（チップ） */}
+        <div>
+          <p className="mb-1 text-gray-400">鍛えた部位</p>
+          <div className="flex flex-wrap gap-1">
+            {ALL_MUSCLES.map((mu) => {
+              const on = e.muscles.includes(mu)
+              return (
+                <button key={mu} onClick={() => toggleMuscle(mu)}
+                  className={`rounded-full px-2 py-0.5 text-[10px] transition ${on ? 'bg-accent text-white' : 'bg-navy-600 text-gray-300 hover:bg-navy-700'}`}>
+                  {mu}
+                </button>
+              )
+            })}
+          </div>
+        </div>
+
+        {/* 直近3セッション（部位・メニュー簡易表示） */}
+        {recent.length > 0 && (
+          <div className="rounded border border-navy-700 bg-navy-900/40 p-2">
+            <span className="mb-1 block text-[10px] text-gray-500">直近3セッション</span>
+            <div className="space-y-1.5">
+              {recent.map((r, i) => (
+                <div key={i} className="border-t border-navy-700/60 pt-1 first:border-t-0 first:pt-0">
+                  <div className="flex items-center justify-between gap-1">
+                    <span className="text-[10px] text-gray-400">{fmtDate(r.date)}</span>
+                    <span className="truncate text-[10px] text-accent">{(r.muscles || []).join(' / ') || '部位なし'}</span>
+                  </div>
+                  {(r.menu || []).length > 0 && (
+                    <div className="mt-0.5 truncate text-[10px] text-gray-400">{(r.menu || []).join('、')}</div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* 前回のメニュー */}
+        {lastMenu.length > 0 && (
+          <div className="rounded border border-navy-700 bg-navy-900/40 p-2">
+            <div className="mb-1 flex items-center justify-between">
+              <span className="text-[10px] text-gray-500">前回のメニュー</span>
+              <button onClick={() => onUpd({ menuText: lastMenu.join('\n') })} className="text-[10px] text-accent hover:underline">今回へコピー</button>
+            </div>
+            <div className="space-y-0.5">
+              {lastMenu.map((line, i) => <div key={i} className="truncate text-[10px] text-gray-400">・{line}</div>)}
+            </div>
+          </div>
+        )}
+
+        {/* メニュー（プリセット選択 + 自由記述） */}
+        <div>
+          <div className="mb-1 flex items-center justify-between gap-1">
+            <span className="text-gray-400">メニュー</span>
+            <div className="flex items-center gap-2">
+              <select value="" onChange={(ev) => { addPreset(ev.target.value); ev.target.value = '' }} className={`${cinp} w-28`}>
+                <option value="">＋種目</option>
+                {presets.map((p) => <option key={p.id} value={p.name}>{p.name}</option>)}
+              </select>
+              <button onClick={onCopyAll} title="全員にコピー" className="flex items-center gap-0.5 whitespace-nowrap text-[10px] text-accent-gold hover:underline"><Copy size={11} /> 全員へ</button>
+            </div>
+          </div>
+          <textarea rows={3} value={e.menuText} onChange={(ev) => onUpd({ menuText: ev.target.value })}
+            placeholder={'1行1種目（手動入力可）\n例）ベンチプレス 60kg×3×10'}
+            className={`${cinp} font-mono leading-relaxed`} />
+        </div>
+
+        <label className="block">
+          <span className="mb-1 block text-gray-400">日次カルテ</span>
+          <textarea rows={3} value={e.member_comment} onChange={(ev) => onUpd({ member_comment: ev.target.value })} placeholder="体重・体調・食事などを自由に記録" className={cinp} />
+        </label>
+
+        {m.plan_type === 'ticket' && (
+          <label className="flex items-center gap-2 text-gray-300">
+            <input type="checkbox" checked={e.consume_ticket} onChange={(ev) => onUpd({ consume_ticket: ev.target.checked })} className="accent-accent" />
+            回数券を1回消費
+          </label>
+        )}
+      </div>
+    </div>
+  )
+}
+
+const cinp = 'w-full rounded border border-navy-600 bg-navy-900 px-2 py-1 text-xs outline-none focus:border-accent'

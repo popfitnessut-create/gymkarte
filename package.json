@@ -1,0 +1,76 @@
+{
+  "name": "gymkarte",
+  "version": "0.1.0",
+  "description": "パーソナルジム会員カルテ管理デスクトップアプリ",
+  "author": "YourGym",
+  "main": "electron/main.js",
+  "scripts": {
+    "dev": "concurrently -k \"npm:dev:vite\" \"npm:dev:electron\"",
+    "dev:vite": "vite",
+    "dev:electron": "wait-on tcp:5173 && cross-env NODE_ENV=development electron .",
+    "build": "vite build",
+    "rebuild": "electron-rebuild -f -w better-sqlite3",
+    "postinstall": "electron-builder install-app-deps",
+    "dist": "vite build && electron-builder",
+    "dist:win": "vite build && electron-builder --win",
+    "dist:mac": "vite build && electron-builder --mac",
+    "release:win": "vite build && electron-builder --win --publish always"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.3.0",
+    "electron-updater": "^6.3.9",
+    "fuse.js": "^7.0.0",
+    "lucide-react": "^0.439.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "recharts": "^2.12.7",
+    "xlsx": "^0.18.5",
+    "zustand": "^4.5.5"
+  },
+  "devDependencies": {
+    "@electron/rebuild": "^3.6.0",
+    "@vitejs/plugin-react": "^4.3.1",
+    "autoprefixer": "^10.4.20",
+    "concurrently": "^9.0.1",
+    "cross-env": "^7.0.3",
+    "electron": "^32.3.3",
+    "electron-builder": "^25.0.5",
+    "postcss": "^8.4.47",
+    "tailwindcss": "^3.4.12",
+    "vite": "^5.4.5",
+    "wait-on": "^8.0.1"
+  },
+  "build": {
+    "appId": "com.yourgym.gymkarte",
+    "productName": "GymKarte",
+    "directories": {
+      "output": "release",
+      "buildResources": "assets"
+    },
+    "files": [
+      "electron/**/*",
+      "dist/**/*",
+      "package.json"
+    ],
+    "icon": "assets/icon.png",
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "popfitnessut-create",
+        "repo": "gymkarte"
+      }
+    ],
+    "win": {
+      "target": "nsis"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true
+    },
+    "mac": {
+      "target": "dmg",
+      "category": "public.app-category.healthcare-fitness"
+    }
+  }
+}
