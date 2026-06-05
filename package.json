@@ -1,6 +1,6 @@
 {
   "name": "gymkarte",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "パーソナルジム会員カルテ管理デスクトップアプリ",
   "author": "YourGym",
   "main": "electron/main.js",
