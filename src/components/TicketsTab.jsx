@@ -83,7 +83,7 @@ export default function TicketsTab({ memberId, onPurchased }) {
   )
 }
 
-function PurchaseModal({ memberId, onClose, onSaved }) {
+export function PurchaseModal({ memberId, memberName, onClose, onSaved }) {
   const today = new Date().toISOString().slice(0, 10)
   const first = TICKET_PLANS[0]
   const [form, setForm] = useState({
@@ -114,7 +114,7 @@ function PurchaseModal({ memberId, onClose, onSaved }) {
     <Overlay onClose={onClose}>
       <div className="w-full max-w-md rounded-xl border border-navy-600 bg-navy-800 p-6">
         <div className="mb-4 flex items-center justify-between">
-          <h3 className="text-lg font-bold">回数券の新規購入</h3>
+          <h3 className="text-lg font-bold">回数券の新規購入{memberName ? `：${memberName}` : ''}</h3>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-100"><X size={18} /></button>
         </div>
         <div className="grid grid-cols-2 gap-4">

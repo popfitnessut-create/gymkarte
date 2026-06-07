@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { ArrowLeft, Save, ExternalLink, AlertTriangle, Copy, GripVertical, Check } from 'lucide-react'
 import { useStore } from '../store/useStore'
 import { ALL_MUSCLES } from '../components/BodyMap'
+import { PurchaseModal } from '../components/TicketsTab'
 import { fmtDate } from '../lib/format'
 
 const today = () => new Date().toISOString().slice(0, 10)
@@ -30,6 +31,7 @@ export default function MultiKarte() {
   const [dragId, setDragId] = useState(null)
   const [selectedIds, setSelectedIds] = useState([]) // 選択保存・選択コピーの対象
   const [selectBanner, setSelectBanner] = useState(false) // 選択保存完了の固定バナー
+  const [purchaseQueue, setPurchaseQueue] = useState([]) // 回数券残0で購入待ちの会員（同一ページ上のモーダルで順次購入）
 
   useEffect(() => {
     window.api.members.cards(ids).then((rows) => {
@@ -78,57 +80,82 @@ export default function MultiKarte() {
     setDragId(null)
   }
 
-  // 指定した会員のうち、入力のある人だけ保存する共通処理
-  const saveCards = async (targetCards) => {
-    setSaving(true)
-    const saved = []
-    const blockedNames = [] // 回数券残0でセッションを保存できなかった会員
-    for (const m of targetCards) {
-      const e = entries[m.id]
-      const menuLines = (e.menuText || '').split('\n').map((l) => l.trim()).filter(Boolean)
-      const exercises = menuLines.map((line) => ({ exercise_name: line }))
-      const consume = m.plan_type === 'ticket' && e.consume_ticket
-      let hasSession = e.muscles.length || exercises.length || consume
-      const hasDaily = e.member_comment.trim()
-      // 回数券ガード：残0の回数券プラン会員はセッション記録を保存しない
-      if (hasSession && m.plan_type === 'ticket' && (m.remaining_count ?? 0) <= 0) {
-        blockedNames.push(m.name)
-        hasSession = false
-      }
-      if (hasSession) {
-        await window.api.sessions.create({
-          member_id: m.id, session_date: today(), participant_count: cards.length,
-          trainer_name: trainer || null, consume_ticket: consume,
-          muscles: e.muscles, exercises
-        })
-      }
-      if (hasDaily) {
-        await window.api.daily.save({
-          member_id: m.id, log_date: today(),
-          member_comment: e.member_comment
-        })
-      }
-      if (hasSession || hasDaily) saved.push(m.id)
-    }
-    setSaving(false)
-    setSavedIds(saved)
-    if (blockedNames.length) {
-      alert(`次の会員は回数券が残0のため、セッション記録を保存できませんでした：\n${blockedNames.map((n) => '・' + n).join('\n')}\n\n回数券を購入してから保存してください。`)
-    }
-    // 残回数を更新
+  // 残回数の再取得（保存・購入後に各カードへ反映）
+  const refreshRemaining = () => {
     window.api.members.cards(cards.map((m) => m.id)).then((rows) => {
       const map = Object.fromEntries(rows.map((r) => [r.id, r]))
       setCards((arr) => arr.map((m) => ({ ...m, remaining_count: map[m.id]?.remaining_count ?? m.remaining_count })))
     })
   }
 
+  // 1会員分のセッションpayloadを構築（入力が無ければnull）
+  const buildSession = (m) => {
+    const e = entries[m.id]
+    const menuLines = (e.menuText || '').split('\n').map((l) => l.trim()).filter(Boolean)
+    const exercises = menuLines.map((line) => ({ exercise_name: line }))
+    const consume = m.plan_type === 'ticket' && e.consume_ticket
+    const hasSession = e.muscles.length || exercises.length || consume
+    if (!hasSession) return null
+    return {
+      member_id: m.id, session_date: today(), participant_count: cards.length,
+      trainer_name: trainer || null, consume_ticket: consume,
+      muscles: e.muscles, exercises
+    }
+  }
+
+  // 指定した会員のうち、入力のある人だけ保存する共通処理
+  // 回数券残0の会員はセッションを保留し、購入待ちキューへ（日次カルテは先に保存）
+  const saveCards = async (targetCards) => {
+    setSaving(true)
+    const saved = []
+    const needPurchase = []
+    for (const m of targetCards) {
+      const e = entries[m.id]
+      const session = buildSession(m)
+      const hasDaily = e.member_comment.trim()
+      const blocked = session && m.plan_type === 'ticket' && (m.remaining_count ?? 0) <= 0
+      if (session && !blocked) {
+        await window.api.sessions.create(session)
+      }
+      if (hasDaily) {
+        await window.api.daily.save({ member_id: m.id, log_date: today(), member_comment: e.member_comment })
+      }
+      if ((session && !blocked) || hasDaily) saved.push(m.id)
+      if (blocked) needPurchase.push(m)
+    }
+    setSaving(false)
+    setSavedIds(saved)
+    refreshRemaining()
+    if (needPurchase.length) {
+      alert(`次の会員は回数券が残0です：\n${needPurchase.map((m) => '・' + m.name).join('\n')}\n\n購入画面を順番に表示します。購入が完了すると、その会員のセッションが保存されます。`)
+      setPurchaseQueue(needPurchase)
+    }
+    return { saved, needPurchase }
+  }
+
+  // 購入完了 → 先頭会員の保留セッションを保存し、次の会員へ（モーダルは同一ページ上なのでカードは閉じない）
+  const handlePurchaseSaved = async () => {
+    const m = purchaseQueue[0]
+    if (m) {
+      const session = buildSession(m)
+      if (session) await window.api.sessions.create(session)
+      setSavedIds((s) => (s.includes(m.id) ? s : [...s, m.id]))
+      refreshRemaining()
+    }
+    setPurchaseQueue((q) => q.slice(1))
+  }
+  // 購入をスキップ（この会員のセッションは保存せず次へ）
+  const handlePurchaseSkip = () => setPurchaseQueue((q) => q.slice(1))
+
   // 全員を対象に保存
   const saveAll = () => saveCards(cards)
-  // 選択中の会員のみ保存（完了後、右上に固定バナーを3秒表示）
+  // 選択中の会員のみ保存（購入待ちが無ければ右上に固定バナーを3秒表示）
   const saveSelected = async () => {
-    await saveCards(cards.filter((m) => selectedIds.includes(m.id)))
-    setSelectBanner(true)
-    setTimeout(() => setSelectBanner(false), 3000)
+    const res = await saveCards(cards.filter((m) => selectedIds.includes(m.id)))
+    if (res.needPurchase.length === 0) {
+      setSelectBanner(true)
+      setTimeout(() => setSelectBanner(false), 3000)
+    }
   }
 
   if (cards.length === 0) return <div className="p-8 text-gray-400">読み込み中…</div>
@@ -140,6 +167,17 @@ export default function MultiKarte() {
         <div className="fixed right-6 top-6 z-50 flex items-center gap-2 rounded-lg border border-green-500/50 bg-green-600 px-5 py-3 text-sm font-medium text-white shadow-lg">
           <Check size={18} /> 選択顧客のカルテを保存しました。
         </div>
+      )}
+
+      {/* 回数券残0の会員を同一ページ上で順次購入（カードは閉じない） */}
+      {purchaseQueue.length > 0 && (
+        <PurchaseModal
+          key={purchaseQueue[0].id}
+          memberId={purchaseQueue[0].id}
+          memberName={purchaseQueue[0].name}
+          onClose={handlePurchaseSkip}
+          onSaved={handlePurchaseSaved}
+        />
       )}
       <div className="flex items-center justify-between border-b border-navy-700 bg-navy-800 px-6 py-3">
         <div className="flex items-center gap-4">
