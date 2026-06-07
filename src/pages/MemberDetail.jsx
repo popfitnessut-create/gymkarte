@@ -21,10 +21,30 @@ export default function MemberDetail() {
   const back = useStore((s) => s.backToList)
   const [tab, setTab] = useState('basic')
   const [member, setMember] = useState(null)
+  const [pendingSession, setPendingSession] = useState(null) // 回数券残0で保留中のセッション
 
   useEffect(() => {
     if (id) window.api.members.get(id).then(setMember)
   }, [id])
+
+  // タブ手動切替時は保留中セッションを破棄（購入を中断したケース）
+  const goTab = (key) => { setPendingSession(null); setTab(key) }
+
+  // 回数券残0で保存しようとした → 入力内容を保持し、購入タブへ自動遷移
+  const handleRequirePurchase = (payload) => {
+    setPendingSession(payload)
+    setTab('tickets')
+    alert('回数券が残0です。\n回数券を購入すると、入力中のセッションが自動的に保存されます。')
+  }
+
+  // 回数券購入が完了 → 保留中セッションがあれば自動保存してセッション記録へ戻る
+  const handlePurchased = async () => {
+    if (!pendingSession) return
+    await window.api.sessions.create(pendingSession)
+    setPendingSession(null)
+    setTab('sessions')
+    alert('回数券を購入し、セッション記録を保存しました。')
+  }
 
   if (!member) return <div className="p-8 text-gray-400">読み込み中…</div>
 
@@ -45,7 +65,7 @@ export default function MemberDetail() {
         {tabsFor(member).map((t) => (
           <button
             key={t.key}
-            onClick={() => setTab(t.key)}
+            onClick={() => goTab(t.key)}
             className={`relative px-4 py-2.5 text-sm font-medium transition
               ${tab === t.key ? 'text-accent' : 'text-gray-400 hover:text-gray-100'}`}
           >
@@ -56,8 +76,8 @@ export default function MemberDetail() {
       </div>
 
       {tab === 'basic' && <BasicInfoTab member={member} onSaved={setMember} />}
-      {tab === 'tickets' && <TicketsTab memberId={member.id} />}
-      {tab === 'sessions' && <SessionsTab memberId={member.id} member={member} onRequirePurchase={() => setTab('tickets')} />}
+      {tab === 'tickets' && <TicketsTab memberId={member.id} onPurchased={handlePurchased} />}
+      {tab === 'sessions' && <SessionsTab memberId={member.id} member={member} onRequirePurchase={handleRequirePurchase} />}
       {tab === 'daily' && <DailyListTab memberId={member.id} />}
       {tab === 'analytics' && <AnalyticsTab memberId={member.id} />}
     </div>

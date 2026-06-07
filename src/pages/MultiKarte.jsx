@@ -82,13 +82,19 @@ export default function MultiKarte() {
   const saveCards = async (targetCards) => {
     setSaving(true)
     const saved = []
+    const blockedNames = [] // 回数券残0でセッションを保存できなかった会員
     for (const m of targetCards) {
       const e = entries[m.id]
       const menuLines = (e.menuText || '').split('\n').map((l) => l.trim()).filter(Boolean)
       const exercises = menuLines.map((line) => ({ exercise_name: line }))
       const consume = m.plan_type === 'ticket' && e.consume_ticket
-      const hasSession = e.muscles.length || exercises.length || consume
+      let hasSession = e.muscles.length || exercises.length || consume
       const hasDaily = e.member_comment.trim()
+      // 回数券ガード：残0の回数券プラン会員はセッション記録を保存しない
+      if (hasSession && m.plan_type === 'ticket' && (m.remaining_count ?? 0) <= 0) {
+        blockedNames.push(m.name)
+        hasSession = false
+      }
       if (hasSession) {
         await window.api.sessions.create({
           member_id: m.id, session_date: today(), participant_count: cards.length,
@@ -106,6 +112,9 @@ export default function MultiKarte() {
     }
     setSaving(false)
     setSavedIds(saved)
+    if (blockedNames.length) {
+      alert(`次の会員は回数券が残0のため、セッション記録を保存できませんでした：\n${blockedNames.map((n) => '・' + n).join('\n')}\n\n回数券を購入してから保存してください。`)
+    }
     // 残回数を更新
     window.api.members.cards(cards.map((m) => m.id)).then((rows) => {
       const map = Object.fromEntries(rows.map((r) => [r.id, r]))

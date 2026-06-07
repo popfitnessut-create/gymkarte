@@ -55,11 +55,9 @@ export default function SessionsTab({ memberId, member, onRequirePurchase }) {
     return '―' // 無制限の月額プラン
   }
 
-  // 利用回数制限の判定（回数券=残0 / ポッププラン等=当月上限到達）
-  const today = new Date().toISOString().slice(0, 10)
-  const limited = planType === 'ticket' || monthlyLimit != null
-  const remainNow = planType === 'ticket' ? ticketRemaining : remainingFor(null)
-  const limitReached = limited && typeof remainNow === 'number' && remainNow <= 0
+  // 月額プランは当月上限で新規入力をブロック。回数券は残0でも入力可（保存時に購入を促す）。
+  const monthlyLimitReached = monthlyLimit != null && remainingFor(null) <= 0
+  const ticketEmpty = planType === 'ticket' && ticketRemaining <= 0
 
   const remove = async (id) => {
     if (!confirm('このカルテを削除しますか？回数券会員の場合、消費した1回が戻ります。')) return
@@ -68,10 +66,10 @@ export default function SessionsTab({ memberId, member, onRequirePurchase }) {
   }
 
   const save = async (payload, id) => {
-    // 回数券ガード：回数券プラン会員は残数が0なら新規記録を一切保存できない（購入タブへ誘導）
+    // 回数券ガード：残0なら保存せず、入力内容を保持したまま購入フローへ渡す。
+    // 購入完了後に MemberDetail 側でこのセッションが自動保存される。
     if (!id && planType === 'ticket' && ticketRemaining <= 0) {
-      alert('該当会員は回数券を未購入です。\n回数券を購入してから保存してください。')
-      onRequirePurchase?.()
+      onRequirePurchase?.(payload)
       return
     }
     if (id) await window.api.sessions.update({ id, ...payload })
@@ -117,17 +115,22 @@ export default function SessionsTab({ memberId, member, onRequirePurchase }) {
         )}
       </div>
 
-      {limitReached && !draft && (
+      {monthlyLimitReached && !draft && (
         <div className="mt-4 flex items-center gap-2 rounded-xl border border-red-500/50 bg-red-500/10 px-4 py-3 text-sm text-red-400">
           <AlertTriangle size={16} />
-          {planType === 'ticket'
-            ? '回数券の残数が0です。新規カルテを登録するには回数券の追加購入が必要です。'
-            : `${planName}の今月の利用上限（${monthlyLimit}回）に達しています。来月まで新規カルテは登録できません。`}
+          {`${planName}の今月の利用上限（${monthlyLimit}回）に達しています。来月まで新規カルテは登録できません。`}
         </div>
       )}
 
-      <button onClick={() => setDraft(true)} disabled={draft || limitReached}
-        title={limitReached ? '利用回数の上限に達しています' : ''}
+      {ticketEmpty && (
+        <div className="mt-4 flex items-center gap-2 rounded-xl border border-accent-gold/50 bg-accent-gold/10 px-4 py-3 text-sm text-accent-gold">
+          <AlertTriangle size={16} />
+          回数券の残数が0です。セッションの入力はできますが、保存時に回数券の購入が必要です（購入後に自動で保存されます）。
+        </div>
+      )}
+
+      <button onClick={() => setDraft(true)} disabled={draft || monthlyLimitReached}
+        title={monthlyLimitReached ? '利用回数の上限に達しています' : ''}
         className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-navy-600 py-3 text-sm text-gray-400 hover:border-accent hover:text-accent disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:border-navy-600 disabled:hover:text-gray-400">
         <Plus size={16} /> 新規カルテを追加
       </button>

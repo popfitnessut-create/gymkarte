@@ -4,7 +4,7 @@ import { fmtDate } from '../lib/format'
 import { TICKET_PLANS, TICKET_SPECS, ticketExpiry } from '../lib/plans'
 
 // 回数券タブ：購入履歴・残回数大表示・新規購入・残3回以下警告
-export default function TicketsTab({ memberId }) {
+export default function TicketsTab({ memberId, onPurchased }) {
   const [tickets, setTickets] = useState([])
   const [modal, setModal] = useState(false)
 
@@ -78,7 +78,7 @@ export default function TicketsTab({ memberId }) {
         </div>
       )}
 
-      {modal && <PurchaseModal memberId={memberId} onClose={() => setModal(false)} onSaved={() => { setModal(false); load() }} />}
+      {modal && <PurchaseModal memberId={memberId} onClose={() => setModal(false)} onSaved={() => { setModal(false); load(); onPurchased?.() }} />}
     </div>
   )
 }
