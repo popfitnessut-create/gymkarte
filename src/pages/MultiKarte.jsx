@@ -28,6 +28,8 @@ export default function MultiKarte() {
   const [saving, setSaving] = useState(false)
   const [savedIds, setSavedIds] = useState([])
   const [dragId, setDragId] = useState(null)
+  const [selectedIds, setSelectedIds] = useState([]) // 選択保存・選択コピーの対象
+  const [selectBanner, setSelectBanner] = useState(false) // 選択保存完了の固定バナー
 
   useEffect(() => {
     window.api.members.cards(ids).then((rows) => {
@@ -43,18 +45,24 @@ export default function MultiKarte() {
   const cols = cards.length >= 5 ? 2 : Math.min(Math.max(cards.length, 1), 4)
   const upd = (id, patch) => setEntries((e) => ({ ...e, [id]: { ...e[id], ...patch } }))
 
-  // 1枚のカードのメニューを全員にコピー
-  const copyMenuToAll = (srcId) => {
+  const toggleSelect = (id) => setSelectedIds((s) => s.includes(id) ? s.filter((x) => x !== id) : [...s, id])
+
+  // 1枚のカードのメニューを指定の会員へコピー
+  const copyMenuTo = (srcId, targetIds) => {
     const src = entries[srcId]?.menuText || ''
     setEntries((e) => {
       const next = { ...e }
-      cards.forEach((m) => {
-        if (m.id === srcId) return
-        next[m.id] = { ...next[m.id], menuText: src }
+      targetIds.forEach((id) => {
+        if (id === srcId) return
+        next[id] = { ...next[id], menuText: src }
       })
       return next
     })
   }
+  // 全員にコピー
+  const copyMenuToAll = (srcId) => copyMenuTo(srcId, cards.map((m) => m.id))
+  // 選択中の会員にコピー
+  const copyMenuToSelected = (srcId) => copyMenuTo(srcId, selectedIds)
 
   // D&D並べ替え
   const onDrop = (targetId) => {
@@ -70,11 +78,11 @@ export default function MultiKarte() {
     setDragId(null)
   }
 
-  // 入力のある会員だけ一括保存
-  const saveAll = async () => {
+  // 指定した会員のうち、入力のある人だけ保存する共通処理
+  const saveCards = async (targetCards) => {
     setSaving(true)
     const saved = []
-    for (const m of cards) {
+    for (const m of targetCards) {
       const e = entries[m.id]
       const menuLines = (e.menuText || '').split('\n').map((l) => l.trim()).filter(Boolean)
       const exercises = menuLines.map((line) => ({ exercise_name: line }))
@@ -105,10 +113,25 @@ export default function MultiKarte() {
     })
   }
 
+  // 全員を対象に保存
+  const saveAll = () => saveCards(cards)
+  // 選択中の会員のみ保存（完了後、右上に固定バナーを3秒表示）
+  const saveSelected = async () => {
+    await saveCards(cards.filter((m) => selectedIds.includes(m.id)))
+    setSelectBanner(true)
+    setTimeout(() => setSelectBanner(false), 3000)
+  }
+
   if (cards.length === 0) return <div className="p-8 text-gray-400">読み込み中…</div>
 
   return (
     <div className="flex h-full flex-col">
+      {/* 選択保存完了の固定バナー（スクロールしても右上に固定） */}
+      {selectBanner && (
+        <div className="fixed right-6 top-6 z-50 flex items-center gap-2 rounded-lg border border-green-500/50 bg-green-600 px-5 py-3 text-sm font-medium text-white shadow-lg">
+          <Check size={18} /> 選択顧客のカルテを保存しました。
+        </div>
+      )}
       <div className="flex items-center justify-between border-b border-navy-700 bg-navy-800 px-6 py-3">
         <div className="flex items-center gap-4">
           <button onClick={() => navigate('members')} className="flex items-center gap-1 text-sm text-gray-400 hover:text-gray-100">
@@ -121,6 +144,12 @@ export default function MultiKarte() {
             <option value="">担当トレーナー（全員共通）</option>
             {trainers.map((t) => <option key={t.id} value={t.name}>{t.name}</option>)}
           </select>
+          {selectedIds.length > 0 && (
+            <button onClick={saveSelected} disabled={saving}
+              className="flex items-center gap-2 rounded-lg border border-accent px-4 py-2 text-sm font-medium text-accent hover:bg-accent/10 disabled:opacity-50">
+              <Save size={16} /> {saving ? '保存中…' : `選択保存（${selectedIds.length}名）`}
+            </button>
+          )}
           <button onClick={saveAll} disabled={saving}
             className="flex items-center gap-2 rounded-lg bg-accent px-5 py-2 text-sm font-medium text-white hover:opacity-90 disabled:opacity-50">
             <Save size={16} /> {saving ? '保存中…' : '一括保存'}
@@ -133,9 +162,13 @@ export default function MultiKarte() {
           {cards.map((m) => (
             <Card key={m.id} member={m} entry={entries[m.id]} presets={presets}
               saved={savedIds.includes(m.id)}
+              selected={selectedIds.includes(m.id)}
+              selectedCount={selectedIds.length}
+              onToggleSelect={() => toggleSelect(m.id)}
               onUpd={(p) => upd(m.id, p)}
               onOpenFull={() => openMember(m.id)}
               onCopyAll={() => copyMenuToAll(m.id)}
+              onCopySelected={() => copyMenuToSelected(m.id)}
               onDragStart={() => setDragId(m.id)}
               onDropCard={() => onDrop(m.id)}
             />
@@ -146,7 +179,7 @@ export default function MultiKarte() {
   )
 }
 
-function Card({ member: m, entry: e, presets, saved, onUpd, onOpenFull, onCopyAll, onDragStart, onDropCard }) {
+function Card({ member: m, entry: e, presets, saved, selected, selectedCount, onToggleSelect, onUpd, onOpenFull, onCopyAll, onCopySelected, onDragStart, onDropCard }) {
   const low = m.remaining_count <= 3
   const toggleMuscle = (n) => onUpd({ muscles: e.muscles.includes(n) ? e.muscles.filter((x) => x !== n) : [...e.muscles, n] })
   // プリセット種目をメニュー末尾に1行追加
@@ -164,12 +197,14 @@ function Card({ member: m, entry: e, presets, saved, onUpd, onOpenFull, onCopyAl
       onDragStart={onDragStart}
       onDragOver={(ev) => ev.preventDefault()}
       onDrop={onDropCard}
-      className={`flex flex-col rounded-xl border bg-navy-800 ${low ? 'border-red-500/60' : 'border-navy-700'}`}
+      className={`flex flex-col rounded-xl border bg-navy-800 ${selected ? 'border-accent ring-1 ring-accent/40' : low ? 'border-red-500/60' : 'border-navy-700'}`}
     >
       {/* ヘッダー（常時表示） */}
       <div className="flex items-start justify-between gap-2 border-b border-navy-700 px-4 py-3">
         <div className="min-w-0">
           <div className="flex items-center gap-2">
+            <input type="checkbox" checked={selected} onChange={onToggleSelect} title="選択保存・選択コピーの対象にする"
+              className="h-4 w-4 shrink-0 accent-accent" onClick={(ev) => ev.stopPropagation()} />
             <GripVertical size={14} className="shrink-0 cursor-grab text-gray-600" />
             <span className="truncate font-bold">{m.name}</span>
             {saved && <Check size={14} className="shrink-0 text-green-400" />}
@@ -252,6 +287,9 @@ function Card({ member: m, entry: e, presets, saved, onUpd, onOpenFull, onCopyAl
                 <option value="">＋種目</option>
                 {presets.map((p) => <option key={p.id} value={p.name}>{p.name}</option>)}
               </select>
+              {selectedCount > 0 && (
+                <button onClick={onCopySelected} title="選択中の会員にコピー" className="flex items-center gap-0.5 whitespace-nowrap text-[10px] text-accent hover:underline"><Copy size={11} /> 選択へ</button>
+              )}
               <button onClick={onCopyAll} title="全員にコピー" className="flex items-center gap-0.5 whitespace-nowrap text-[10px] text-accent-gold hover:underline"><Copy size={11} /> 全員へ</button>
             </div>
           </div>

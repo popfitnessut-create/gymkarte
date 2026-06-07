@@ -13,7 +13,16 @@ export function calcAge(birthdate) {
 export const STATUS_LABEL = {
   active: 'アクティブ',
   paused: '休会',
-  withdrawn: '退会'
+  withdrawn: '退会',
+  cancelled: '解約'
+}
+
+// 表示用の会員ID。手動入力(member_code)があればそれを、なければ内部idを#0001形式で
+export function memberCode(m) {
+  if (!m) return ''
+  const c = m.member_code != null ? String(m.member_code).trim() : ''
+  if (c) return c
+  return '#' + String(m.id).padStart(4, '0')
 }
 
 export const GENDER_LABEL = {

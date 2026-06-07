@@ -2,14 +2,15 @@ import { useEffect, useMemo, useState } from 'react'
 import { Search, UserPlus, AlertTriangle, X, Layers } from 'lucide-react'
 import { useStore } from '../store/useStore'
 import { buildIndex, runSearch, highlightName } from '../lib/search'
-import { STATUS_LABEL, fmtDate } from '../lib/format'
+import { STATUS_LABEL, fmtDate, memberCode } from '../lib/format'
 import NewMemberModal from '../components/NewMemberModal'
 
 const FILTERS = [
   { key: 'all', label: 'すべて' },
   { key: 'active', label: 'アクティブ' },
   { key: 'paused', label: '休会' },
-  { key: 'withdrawn', label: '退会' }
+  { key: 'withdrawn', label: '退会' },
+  { key: 'cancelled', label: '解約' }
 ]
 
 export default function MemberList() {
@@ -131,7 +132,7 @@ export default function MemberList() {
                   <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
                     <input type="checkbox" checked={isChecked} onChange={() => toggleCheck(m.id)} className="h-4 w-4 accent-accent-gold" />
                   </td>
-                  <td className="px-4 py-3 text-gray-400">#{String(m.id).padStart(4, '0')}</td>
+                  <td className="px-4 py-3 text-gray-400">{memberCode(m)}</td>
                   <td className="px-4 py-3">
                     <div className="font-medium">
                       {parts.map((p, i) => p.hl ? <mark key={i} className="hl">{p.text}</mark> : <span key={i}>{p.text}</span>)}
@@ -169,7 +170,8 @@ function StatusBadge({ status }) {
   const map = {
     active: 'bg-green-500/20 text-green-400',
     paused: 'bg-yellow-500/20 text-yellow-400',
-    withdrawn: 'bg-gray-500/20 text-gray-400'
+    withdrawn: 'bg-gray-500/20 text-gray-400',
+    cancelled: 'bg-red-500/20 text-red-400'
   }
   return (
     <span className={`rounded-full px-2.5 py-1 text-xs font-medium ${map[status] || map.withdrawn}`}>

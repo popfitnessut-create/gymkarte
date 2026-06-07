@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { ArrowLeft, Save, Trash2 } from 'lucide-react'
 import { useStore } from '../store/useStore'
-import { calcAge } from '../lib/format'
+import { calcAge, memberCode } from '../lib/format'
 import { PLAN_TYPES, planOptions } from '../lib/plans'
 import TicketsTab from '../components/TicketsTab'
 import SessionsTab from '../components/SessionsTab'
@@ -37,7 +37,7 @@ export default function MemberDetail() {
       <div className="mb-1 flex items-baseline gap-3">
         <h1 className="text-2xl font-bold">{member.name}</h1>
         <span className="text-sm text-gray-400">{member.furigana}</span>
-        <span className="text-xs text-gray-500">#{String(member.id).padStart(4, '0')}</span>
+        <span className="text-xs text-gray-500">{memberCode(member)}</span>
       </div>
 
       {/* タブ */}
@@ -57,7 +57,7 @@ export default function MemberDetail() {
 
       {tab === 'basic' && <BasicInfoTab member={member} onSaved={setMember} />}
       {tab === 'tickets' && <TicketsTab memberId={member.id} />}
-      {tab === 'sessions' && <SessionsTab memberId={member.id} member={member} />}
+      {tab === 'sessions' && <SessionsTab memberId={member.id} member={member} onRequirePurchase={() => setTab('tickets')} />}
       {tab === 'daily' && <DailyListTab memberId={member.id} />}
       {tab === 'analytics' && <AnalyticsTab memberId={member.id} />}
     </div>
@@ -100,6 +100,9 @@ function BasicInfoTab({ member, onSaved }) {
   return (
     <div className="max-w-3xl">
       <div className="grid grid-cols-2 gap-5">
+        <Field label="会員ID（手動入力・任意）">
+          <input value={form.member_code || ''} onChange={(e) => set('member_code', e.target.value)} className={inp} placeholder="空欄なら自動採番IDを表示" />
+        </Field>
         <Field label="氏名（漢字）">
           <input value={form.name || ''} onChange={(e) => set('name', e.target.value)} className={inp} />
         </Field>
@@ -130,6 +133,7 @@ function BasicInfoTab({ member, onSaved }) {
             <option value="active">アクティブ</option>
             <option value="paused">休会</option>
             <option value="withdrawn">退会</option>
+            <option value="cancelled">解約</option>
           </select>
         </Field>
         <Field label="プラン種別">

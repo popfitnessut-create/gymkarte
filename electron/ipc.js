@@ -33,8 +33,8 @@ function registerIpc() {
   ipcMain.handle('members:create', (_e, data) => {
     const db = getDb()
     const stmt = db.prepare(`INSERT INTO members
-      (name, furigana, birthdate, gender, phone, email, joined_at, status, goal, health_notes, notes, plan_type, plan_name, counseling_notes)
-      VALUES (@name, @furigana, @birthdate, @gender, @phone, @email, @joined_at, @status, @goal, @health_notes, @notes, @plan_type, @plan_name, @counseling_notes)`)
+      (name, furigana, birthdate, gender, phone, email, joined_at, status, goal, health_notes, notes, plan_type, plan_name, counseling_notes, member_code)
+      VALUES (@name, @furigana, @birthdate, @gender, @phone, @email, @joined_at, @status, @goal, @health_notes, @notes, @plan_type, @plan_name, @counseling_notes, @member_code)`)
     const info = stmt.run(normalizeMember(data))
     return db.prepare('SELECT * FROM members WHERE id = ?').get(info.lastInsertRowid)
   })
@@ -47,6 +47,7 @@ function registerIpc() {
       phone=@phone, email=@email, joined_at=@joined_at, status=@status,
       goal=@goal, health_notes=@health_notes, notes=@notes,
       plan_type=@plan_type, plan_name=@plan_name, counseling_notes=@counseling_notes,
+      member_code=@member_code,
       updated_at=datetime('now','localtime')
       WHERE id=@id`)
     stmt.run({ ...normalizeMember(data), id: data.id })
@@ -312,6 +313,7 @@ function pad2(n) { return String(n).padStart(2, '0') }
 function normalizeStatus(v) {
   if (!v) return 'active'
   const s = String(v).trim()
+  if (/解約/.test(s) || /cancel/i.test(s)) return 'cancelled'
   if (/休/.test(s) || /paus/i.test(s)) return 'paused'
   if (/退/.test(s) || /withdraw/i.test(s)) return 'withdrawn'
   return 'active'
@@ -712,11 +714,13 @@ function numOrNull(v) {
 
 // undefinedをnullに揃え、欠損フィールドを補完
 function normalizeMember(d) {
-  const fields = ['name', 'furigana', 'birthdate', 'gender', 'phone', 'email', 'joined_at', 'status', 'goal', 'health_notes', 'notes', 'plan_type', 'plan_name', 'counseling_notes']
+  const fields = ['name', 'furigana', 'birthdate', 'gender', 'phone', 'email', 'joined_at', 'status', 'goal', 'health_notes', 'notes', 'plan_type', 'plan_name', 'counseling_notes', 'member_code']
   const out = {}
   for (const f of fields) out[f] = d[f] ?? null
   if (!out.status) out.status = 'active'
   if (!out.plan_type) out.plan_type = 'ticket'
+  // 会員IDは空文字ならnullに揃える
+  if (out.member_code != null && String(out.member_code).trim() === '') out.member_code = null
   return out
 }
 

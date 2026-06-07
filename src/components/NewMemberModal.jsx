@@ -4,7 +4,7 @@ import { X } from 'lucide-react'
 // 新規会員登録モーダル（基本情報の最小入力）
 export default function NewMemberModal({ onClose, onCreated }) {
   const [form, setForm] = useState({
-    name: '', furigana: '', phone: '', gender: 'male',
+    member_code: '', name: '', furigana: '', phone: '', gender: 'male',
     birthdate: '', joined_at: new Date().toISOString().slice(0, 10), status: 'active'
   })
   const [saving, setSaving] = useState(false)
@@ -27,6 +27,9 @@ export default function NewMemberModal({ onClose, onCreated }) {
         </div>
 
         <div className="grid grid-cols-2 gap-4">
+          <Field label="会員ID（手動入力・任意）" full>
+            <input value={form.member_code} onChange={(e) => set('member_code', e.target.value)} className={inp} placeholder="例：1001 / A-101（空欄なら自動採番）" />
+          </Field>
           <Field label="氏名（漢字）*" full>
             <input value={form.name} onChange={(e) => set('name', e.target.value)} className={inp} />
           </Field>

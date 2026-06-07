@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Plus, Trash2, AlertTriangle, X } from 'lucide-react'
 import { fmtDate } from '../lib/format'
-import { TICKET_PLANS, TICKET_SPECS } from '../lib/plans'
+import { TICKET_PLANS, TICKET_SPECS, ticketExpiry } from '../lib/plans'
 
 // 回数券タブ：購入履歴・残回数大表示・新規購入・残3回以下警告
 export default function TicketsTab({ memberId }) {
@@ -88,11 +88,14 @@ function PurchaseModal({ memberId, onClose, onSaved }) {
   const first = TICKET_PLANS[0]
   const [form, setForm] = useState({
     plan: first, purchased_at: today,
-    total_count: TICKET_SPECS[first].count, expires_at: '',
+    total_count: TICKET_SPECS[first].count, expires_at: ticketExpiry(today),
     price: TICKET_SPECS[first].price, notes: ''
   })
   const [saving, setSaving] = useState(false)
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }))
+
+  // 購入日を変更したら有効期限（+4ヶ月・月末クランプ）を自動再計算
+  const setPurchasedAt = (v) => setForm((f) => ({ ...f, purchased_at: v, expires_at: ticketExpiry(v) }))
 
   // 回数券種別の選択に応じて回数・価格を自動反映
   const selectPlan = (plan) => {
@@ -120,9 +123,9 @@ function PurchaseModal({ memberId, onClose, onSaved }) {
               {TICKET_PLANS.map((p) => <option key={p} value={p}>{p}（{TICKET_SPECS[p].count}回 / ¥{TICKET_SPECS[p].price.toLocaleString()}）</option>)}
             </select>
           </L>
-          <L label="購入日"><input type="date" value={form.purchased_at} onChange={(e) => set('purchased_at', e.target.value)} className={inp} /></L>
+          <L label="購入日"><input type="date" value={form.purchased_at} onChange={(e) => setPurchasedAt(e.target.value)} className={inp} /></L>
           <L label="枚数（回数）"><input type="number" min="1" value={form.total_count} onChange={(e) => set('total_count', e.target.value)} className={inp} /></L>
-          <L label="有効期限"><input type="date" value={form.expires_at} onChange={(e) => set('expires_at', e.target.value)} className={inp} /></L>
+          <L label="有効期限（購入日+4ヶ月・自動／編集可）"><input type="date" value={form.expires_at} onChange={(e) => set('expires_at', e.target.value)} className={inp} /></L>
           <L label="購入金額（円）"><input type="number" min="0" value={form.price} onChange={(e) => set('price', e.target.value)} className={inp} /></L>
           <L label="備考" full><input value={form.notes} onChange={(e) => set('notes', e.target.value)} className={inp} /></L>
         </div>

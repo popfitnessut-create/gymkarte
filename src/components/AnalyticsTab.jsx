@@ -8,6 +8,13 @@ import { tooltipStyle } from '../pages/Dashboard'
 
 const COLORS = ['#2f81f7', '#e3b341', '#34d399', '#f87171', '#a78bfa', '#fb923c', '#22d3ee', '#f472b6', '#84cc16', '#94a3b8', '#facc15', '#38bdf8', '#c084fc']
 
+// 鍛えた部位のグルーピング定義（下半身 / 肩 / 腕）。未定義の部位は単独表示。
+const MUSCLE_GROUP = {
+  '大腿四頭筋': '下半身', 'ハムストリングス': '下半身', '臀部': '下半身', 'ふくらはぎ': '下半身', '脚全体': '下半身',
+  '肩(前)': '肩', '肩(後)': '肩', '肩(後ろ)': '肩', '僧帽筋': '肩',
+  '上腕二頭筋': '腕', '上腕三頭筋': '腕', '前腕': '腕'
+}
+
 // 分析タブ：来店頻度・部位割合・重量推移・体重体脂肪・サマリー
 export default function AnalyticsTab({ memberId }) {
   const [d, setD] = useState(null)
@@ -20,6 +27,20 @@ export default function AnalyticsTab({ memberId }) {
       if (names.length) setExName(names[0])
     })
   }, [memberId])
+
+  // 部位をグルーピングして集計し、割合（％）を付与
+  const muscleData = useMemo(() => {
+    const src = d?.muscles || []
+    const agg = {}
+    for (const m of src) {
+      const key = MUSCLE_GROUP[m.name] || m.name
+      agg[key] = (agg[key] || 0) + (m.value || 0)
+    }
+    const total = Object.values(agg).reduce((s, v) => s + v, 0)
+    return Object.entries(agg)
+      .map(([name, value]) => ({ name, value, pct: total ? Math.round((value / total) * 100) : 0 }))
+      .sort((a, b) => b.value - a.value)
+  }, [d])
 
   const exData = useMemo(() => {
     if (!d || !exName) return []
@@ -66,16 +87,18 @@ export default function AnalyticsTab({ memberId }) {
               </ResponsiveContainer>
             </Panel>
 
-            {/* 部位割合 */}
+            {/* 部位割合（下半身/肩/腕にグルーピング・割合％表示） */}
             <Panel title="鍛えた部位の割合">
-              {d.muscles.length === 0 ? <Empty /> : (
+              {muscleData.length === 0 ? <Empty /> : (
                 <ResponsiveContainer width="100%" height={240}>
                   <PieChart>
-                    <Pie data={d.muscles} dataKey="value" nameKey="name" cx="50%" cy="50%" innerRadius={55} outerRadius={85} paddingAngle={2}>
-                      {d.muscles.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
+                    <Pie data={muscleData} dataKey="value" nameKey="name" cx="50%" cy="50%" innerRadius={55} outerRadius={85} paddingAngle={2}
+                      labelLine={false} label={({ pct }) => (pct >= 8 ? `${pct}%` : '')}>
+                      {muscleData.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
                     </Pie>
-                    <Tooltip contentStyle={tooltipStyle} formatter={(v, n) => [`${v}回`, n]} />
-                    <Legend wrapperStyle={{ fontSize: 11, color: '#94a3b8' }} />
+                    <Tooltip contentStyle={tooltipStyle} formatter={(v, n, p) => [`${v}回（${p?.payload?.pct ?? 0}%）`, n]} />
+                    <Legend wrapperStyle={{ fontSize: 11, color: '#94a3b8' }}
+                      formatter={(value, entry) => `${value} ${entry?.payload?.pct ?? 0}%`} />
                   </PieChart>
                 </ResponsiveContainer>
               )}

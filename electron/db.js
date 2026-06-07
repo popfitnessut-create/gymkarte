@@ -143,6 +143,8 @@ function migrate() {
   if (!m.includes('plan_type')) db.exec("ALTER TABLE members ADD COLUMN plan_type TEXT DEFAULT 'ticket'")
   if (!m.includes('plan_name')) db.exec('ALTER TABLE members ADD COLUMN plan_name TEXT')
   if (!m.includes('counseling_notes')) db.exec('ALTER TABLE members ADD COLUMN counseling_notes TEXT')
+  // 手動入力できる会員ID（表示・検索用）。内部の自動採番idはそのまま維持
+  if (!m.includes('member_code')) db.exec('ALTER TABLE members ADD COLUMN member_code TEXT')
   const s = cols('sessions')
   if (!s.includes('usage_status')) db.exec('ALTER TABLE sessions ADD COLUMN usage_status TEXT')
 

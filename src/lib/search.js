@@ -46,14 +46,15 @@ export function buildIndex(members) {
     ...m,
     _hira: kataToHira(m.furigana),
     _roma: toRomaji(m.furigana),
-    _idstr: String(m.id)
+    _idstr: String(m.id),
+    _code: m.member_code != null ? String(m.member_code) : ''
   }))
   const fuse = new Fuse(docs, {
     includeScore: true,
     includeMatches: true,
     threshold: 0.4,
     ignoreLocation: true,
-    keys: ['name', 'furigana', '_hira', '_roma', 'phone', '_idstr']
+    keys: ['name', 'furigana', '_hira', '_roma', 'phone', '_idstr', '_code']
   })
   return fuse
 }

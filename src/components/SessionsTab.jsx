@@ -3,7 +3,7 @@ import { Plus, Trash2, Save, Dumbbell, ChevronDown, ChevronUp, AlertTriangle, Ch
 import { usageLabel, MUSCLE_OPTIONS, MONTHLY_LIMITS } from '../lib/plans'
 
 // セッション記録タブ：行カード型。新規は下へ追加。日次カルテ統合。
-export default function SessionsTab({ memberId, member }) {
+export default function SessionsTab({ memberId, member, onRequirePurchase }) {
   const [sessions, setSessions] = useState([])
   const [ticketRemaining, setTicketRemaining] = useState(0)
   const [trainers, setTrainers] = useState([])
@@ -68,6 +68,12 @@ export default function SessionsTab({ memberId, member }) {
   }
 
   const save = async (payload, id) => {
+    // 回数券ガード：回数券プラン会員は残数が0なら新規記録を一切保存できない（購入タブへ誘導）
+    if (!id && planType === 'ticket' && ticketRemaining <= 0) {
+      alert('該当会員は回数券を未購入です。\n回数券を購入してから保存してください。')
+      onRequirePurchase?.()
+      return
+    }
     if (id) await window.api.sessions.update({ id, ...payload })
     else await window.api.sessions.create(payload)
     setDraft(false)
@@ -248,8 +254,8 @@ function SessionCard({ session, member, trainers, presets, remaining, onSave, on
           </div>
 
           {planType === 'ticket' && (
-            <label className="mt-3 flex items-center gap-2 text-xs text-gray-300">
-              <input type="checkbox" checked={form.consume_ticket} onChange={(e) => set('consume_ticket', e.target.checked)} />
+            <label className="mt-3 flex cursor-pointer items-center gap-3 rounded-lg border border-navy-600 bg-navy-900 px-4 py-3 text-base font-medium text-gray-100 hover:border-accent">
+              <input type="checkbox" checked={form.consume_ticket} onChange={(e) => set('consume_ticket', e.target.checked)} className="h-5 w-5 accent-accent" />
               回数券を1回消費する
             </label>
           )}
