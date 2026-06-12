@@ -1,30 +1,188 @@
 const path = require('path')
 const fs = require('fs')
-const Database = require('better-sqlite3')
+
+// libSQL（better-sqlite3 互換・クラウド同期対応）を使用。
+// libsql はビルド済みバイナリ（NAPI）で動くためコンパイル不要。
+// 万一 libsql が読めない環境では better-sqlite3 があればフォールバック、無ければ明示エラー。
+let Database
+let driver = 'libsql'
+try {
+  Database = require('libsql')
+  driver = 'libsql'
+} catch (e) {
+  try {
+    Database = require('better-sqlite3')
+    driver = 'better-sqlite3'
+  } catch (e2) {
+    throw new Error('データベースドライバ（libsql）の読み込みに失敗しました: ' + e.message)
+  }
+}
 
 let db = null
 let currentDbPath = null
+let userDataDir = null
+
+// ===== 同期（クラウド共有）状態 =====
+let syncEnabled = false          // 同期モードで起動しているか
+let syncTimer = null             // 定期プル用インターバル
+let syncDebounce = null          // 書き込み後のまとめ同期用タイマー
+let lastSyncAt = null            // 最終同期時刻
+let lastSyncError = null         // 直近の同期エラー
+
+const SYNC_CONFIG_FILE = 'sync-config.json'
+const PULL_INTERVAL_MS = 3000    // 他端末の変更を取り込む間隔
+const PUSH_DEBOUNCE_MS = 400     // 書き込み後に同期するまでの猶予（トランザクションを1回にまとめる）
+
+// 同期設定ファイル（userData/sync-config.json）を読む。{ syncUrl, authToken }
+function readSyncConfig() {
+  try {
+    const p = path.join(userDataDir, SYNC_CONFIG_FILE)
+    if (!fs.existsSync(p)) return null
+    const raw = JSON.parse(fs.readFileSync(p, 'utf-8'))
+    if (raw && typeof raw.syncUrl === 'string' && raw.syncUrl.trim()) {
+      return { syncUrl: raw.syncUrl.trim(), authToken: (raw.authToken || '').trim() }
+    }
+  } catch (e) {
+    lastSyncError = '設定ファイルの読み込みに失敗: ' + e.message
+  }
+  return null
+}
 
 // DBファイルの保存先（userData配下）を初期化してスキーマを作成する
 function initDb(userDataPath) {
+  userDataDir = userDataPath
   const dir = path.join(userDataPath, 'data')
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
+
+  const cfg = driver === 'libsql' ? readSyncConfig() : null
+
+  if (cfg) {
+    // ---- クラウド同期モード（埋め込みレプリカ）----
+    // ローカルは「レプリカ」専用ファイルを使う（従来の gymkarte.db とは分離し、
+    // 既存ローカルデータと衝突させない。プライマリ＝Turso側が正）。
+    const replicaPath = path.join(dir, 'gymkarte-sync.db')
+    currentDbPath = replicaPath
+    try {
+      db = new Database(replicaPath, { syncUrl: cfg.syncUrl, authToken: cfg.authToken })
+      syncEnabled = true
+      // まずプライマリの最新を取り込む（オフライン時は失敗しても続行）
+      safeSync()
+      try { db.pragma('foreign_keys = ON') } catch (e) { /* レプリカでは無視される場合あり */ }
+      installAutoSync()
+      createSchema()
+      safeSync()
+      startPullTimer()
+      return replicaPath
+    } catch (e) {
+      // 同期接続に失敗 → ローカル単独で起動（データ消失を防ぐ）
+      lastSyncError = '同期接続に失敗: ' + e.message
+      syncEnabled = false
+      db = null
+    }
+  }
+
+  // ---- ローカル単独モード（従来動作）----
   const dbPath = path.join(dir, 'gymkarte.db')
   currentDbPath = dbPath
-
   db = new Database(dbPath)
-  db.pragma('journal_mode = WAL')
-  db.pragma('foreign_keys = ON')
-
+  try { db.pragma('journal_mode = WAL') } catch (e) { /* libsqlでは未対応の場合あり */ }
+  try { db.pragma('foreign_keys = ON') } catch (e) {}
   createSchema()
   return dbPath
 }
 
+// db.prepare をラップし、書き込み（run）後にまとめて同期をスケジュールする。
+// これにより ipc.js の各ハンドラを個別に変更せず、全書き込みを同期対象にできる。
+function installAutoSync() {
+  const realPrepare = db.prepare.bind(db)
+  db.prepare = (sql) => {
+    const stmt = realPrepare(sql)
+    if (stmt && typeof stmt.run === 'function') {
+      const realRun = stmt.run.bind(stmt)
+      stmt.run = (...args) => {
+        const res = realRun(...args)
+        scheduleSync()
+        return res
+      }
+    }
+    return stmt
+  }
+  // db.exec（スキーマ・マイグレーション）後も一度同期
+  const realExec = db.exec.bind(db)
+  db.exec = (sql) => {
+    const res = realExec(sql)
+    scheduleSync()
+    return res
+  }
+}
+
+// 書き込み後の同期をデバウンス（連続書き込み・トランザクションを1回にまとめる）
+function scheduleSync() {
+  if (!syncEnabled) return
+  if (syncDebounce) clearTimeout(syncDebounce)
+  syncDebounce = setTimeout(() => { syncDebounce = null; safeSync() }, PUSH_DEBOUNCE_MS)
+}
+
+// 実際の同期。失敗してもアプリは継続（オフライン耐性）。
+function safeSync() {
+  if (!syncEnabled || !db || typeof db.sync !== 'function') return false
+  try {
+    db.sync()
+    lastSyncAt = new Date().toISOString()
+    lastSyncError = null
+    return true
+  } catch (e) {
+    lastSyncError = e.message
+    return false
+  }
+}
+
+// 定期プル：他端末の変更を取り込む
+function startPullTimer() {
+  if (syncTimer) clearInterval(syncTimer)
+  syncTimer = setInterval(safeSync, PULL_INTERVAL_MS)
+}
+
 function getDbPath() { return currentDbPath }
+
+// 同期状態（設定画面表示用）
+function getSyncStatus() {
+  const cfg = readSyncConfig()
+  return {
+    driver,
+    enabled: syncEnabled,
+    configured: !!cfg,
+    syncUrl: cfg ? cfg.syncUrl : '',
+    lastSyncAt,
+    lastError: lastSyncError,
+    canSync: driver === 'libsql'
+  }
+}
+
+// 設定画面から同期先を保存。次回起動から有効。
+function writeSyncConfig({ syncUrl, authToken }) {
+  const p = path.join(userDataDir, SYNC_CONFIG_FILE)
+  if (!syncUrl || !String(syncUrl).trim()) {
+    // 空 → 同期解除（ファイル削除）
+    if (fs.existsSync(p)) fs.unlinkSync(p)
+    return { ok: true, cleared: true }
+  }
+  fs.writeFileSync(p, JSON.stringify({ syncUrl: String(syncUrl).trim(), authToken: (authToken || '').trim() }, null, 2), 'utf-8')
+  return { ok: true }
+}
+
+// 手動同期（設定画面の「今すぐ同期」）
+function syncNow() {
+  if (!syncEnabled) return { ok: false, reason: 'disabled' }
+  const ok = safeSync()
+  return { ok, lastSyncAt, error: lastSyncError }
+}
 
 // バックアップ復元用：現DBを閉じて別ファイルで開き直す前のクローズ
 function closeDb() {
-  if (db) { db.close(); db = null }
+  if (syncTimer) { clearInterval(syncTimer); syncTimer = null }
+  if (syncDebounce) { clearTimeout(syncDebounce); syncDebounce = null }
+  if (db) { try { db.close() } catch (e) {} db = null }
 }
 
 // 要件定義書のスキーマ通りに全テーブルを作成
@@ -224,4 +382,7 @@ function getDb() {
   return db
 }
 
-module.exports = { initDb, getDb, getDbPath, closeDb }
+module.exports = {
+  initDb, getDb, getDbPath, closeDb,
+  getSyncStatus, writeSyncConfig, syncNow
+}

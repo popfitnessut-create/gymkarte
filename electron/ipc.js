@@ -1,7 +1,7 @@
 const { ipcMain, dialog, app, BrowserWindow } = require('electron')
 const fs = require('fs')
 const path = require('path')
-const { getDb, getDbPath } = require('./db')
+const { getDb, getDbPath, getSyncStatus, writeSyncConfig, syncNow } = require('./db')
 
 // レンダラーから呼ばれるDB操作をIPCハンドラとして登録
 function registerIpc() {
@@ -42,6 +42,15 @@ function registerIpc() {
   // 更新
   ipcMain.handle('members:update', (_e, data) => {
     const db = getDb()
+    // 競合検知：他端末で先に更新されていれば上書きせず通知（同時編集対策）。
+    // data.expected_updated_at にフォーム読込時の updated_at が入っている前提。
+    // data.force === true なら検知を無視して上書き。
+    if (data.expected_updated_at != null && !data.force) {
+      const cur = db.prepare('SELECT updated_at FROM members WHERE id = ?').get(data.id)
+      if (cur && cur.updated_at && cur.updated_at !== data.expected_updated_at) {
+        return { conflict: true, current: db.prepare('SELECT * FROM members WHERE id = ?').get(data.id) }
+      }
+    }
     const stmt = db.prepare(`UPDATE members SET
       name=@name, furigana=@furigana, birthdate=@birthdate, gender=@gender,
       phone=@phone, email=@email, joined_at=@joined_at, status=@status,
@@ -122,6 +131,34 @@ function registerIpc() {
   registerSettingsIpc()
   registerBackupIpc()
   registerExcelIpc()
+  registerSyncIpc()
+}
+
+/* ===================== クラウド同期（店舗PC ⇔ Mac 共有） ===================== */
+function registerSyncIpc() {
+  // 現在の同期状態（設定画面の表示用）
+  ipcMain.handle('sync:status', () => getSyncStatus())
+
+  // 同期先（Turso）のURL・トークンを保存。空文字なら同期解除。保存後は再起動で反映。
+  ipcMain.handle('sync:setConfig', async (_e, { syncUrl, authToken }) => {
+    let res
+    try {
+      res = writeSyncConfig({ syncUrl, authToken })
+    } catch (e) {
+      return { ok: false, error: e.message }
+    }
+    const win = BrowserWindow.getFocusedWindow()
+    const confirm = await dialog.showMessageBox(win, {
+      type: 'info', buttons: ['後で', '再起動して反映'], defaultId: 1, cancelId: 0,
+      message: res.cleared ? 'クラウド同期を解除しました' : 'クラウド同期の設定を保存しました',
+      detail: '設定を反映するにはアプリの再起動が必要です。今すぐ再起動しますか？'
+    })
+    if (confirm.response === 1) { app.relaunch(); app.exit(0) }
+    return { ...res, restarted: confirm.response === 1 }
+  })
+
+  // 今すぐ同期（手動プル/プッシュ）
+  ipcMain.handle('sync:now', () => syncNow())
 }
 
 /* ===================== 設定・マスタ編集 ===================== */

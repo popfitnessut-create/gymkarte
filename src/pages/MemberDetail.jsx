@@ -101,12 +101,21 @@ function BasicInfoTab({ member, onSaved }) {
 
   useEffect(() => setForm(member), [member])
 
-  const save = async () => {
+  const save = async (force = false) => {
     setSaving(true)
-    const updated = await window.api.members.update(form)
+    // 同時編集対策：読込時の updated_at を渡し、他端末で先に更新されていたら競合を検知
+    const res = await window.api.members.update({ ...form, expected_updated_at: form.updated_at, force })
     setSaving(false)
+    if (res && res.conflict) {
+      const overwrite = confirm(
+        '他の端末でこの会員情報が更新されています。\n\nOK：この内容で上書き保存する\nキャンセル：相手の最新内容を読み込む（入力中の変更は破棄）'
+      )
+      if (overwrite) return save(true)
+      onSaved(res.current)
+      return
+    }
     setSavedAt(new Date())
-    onSaved(updated)
+    onSaved(res)
   }
 
   const remove = async () => {
@@ -194,7 +203,7 @@ function BasicInfoTab({ member, onSaved }) {
       </div>
 
       <div className="mt-6 flex items-center gap-3">
-        <button onClick={save} disabled={saving} className="flex items-center gap-2 rounded-lg bg-accent px-5 py-2.5 text-sm font-medium text-white hover:opacity-90 disabled:opacity-50">
+        <button onClick={() => save()} disabled={saving} className="flex items-center gap-2 rounded-lg bg-accent px-5 py-2.5 text-sm font-medium text-white hover:opacity-90 disabled:opacity-50">
           <Save size={16} /> {saving ? '保存中…' : '保存'}
         </button>
         <button onClick={remove} className="flex items-center gap-2 rounded-lg border border-red-500/40 px-4 py-2.5 text-sm text-red-400 hover:bg-red-500/10">

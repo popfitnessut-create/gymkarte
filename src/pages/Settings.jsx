@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Save, Plus, Trash2, Download, Upload, FileSpreadsheet, Dumbbell, RefreshCw } from 'lucide-react'
+import { Save, Plus, Trash2, Download, Upload, FileSpreadsheet, Dumbbell, RefreshCw, Cloud, CheckCircle2, AlertTriangle } from 'lucide-react'
 import ExcelImport from '../components/ExcelImport'
 
 export default function Settings() {
@@ -8,12 +8,105 @@ export default function Settings() {
       <h1 className="mb-6 text-2xl font-bold">設定</h1>
       <div className="max-w-3xl space-y-6">
         <GymSection />
+        <CloudSyncSection />
         <TrainerSection />
         <PresetSection />
         <DataSection />
         <UpdateSection />
       </div>
     </div>
+  )
+}
+
+// クラウド同期（店舗PCとMacでデータ共有）
+function CloudSyncSection() {
+  const [status, setStatus] = useState(null)
+  const [url, setUrl] = useState('')
+  const [token, setToken] = useState('')
+  const [msg, setMsg] = useState('')
+  const [busy, setBusy] = useState(false)
+
+  const loadStatus = () => window.api?.sync?.status().then((s) => {
+    setStatus(s)
+    if (s?.syncUrl) setUrl(s.syncUrl)
+  }).catch(() => {})
+  useEffect(() => { loadStatus() }, [])
+
+  if (!window.api?.sync) return null
+
+  const save = async () => {
+    setBusy(true); setMsg('')
+    const res = await window.api.sync.setConfig({ syncUrl: url, authToken: token })
+    setBusy(false)
+    if (res?.ok === false) setMsg('保存に失敗しました: ' + (res.error || ''))
+    else if (!res?.restarted) { setMsg('保存しました。次回の再起動で反映されます。'); loadStatus() }
+  }
+  const syncNow = async () => {
+    setBusy(true); setMsg('')
+    const res = await window.api.sync.now()
+    setBusy(false)
+    setMsg(res?.ok ? '同期しました。' : '同期できませんでした' + (res?.error ? '：' + res.error : ''))
+    loadStatus()
+  }
+  const disconnect = async () => {
+    if (!confirm('クラウド同期を解除しますか？このPCはローカル保存に戻ります（データはクラウド側に残ります）。')) return
+    setBusy(true)
+    await window.api.sync.setConfig({ syncUrl: '', authToken: '' })
+    setBusy(false)
+  }
+
+  const enabled = status?.enabled
+  const canSync = status?.canSync !== false
+
+  return (
+    <Section title="クラウド同期（店舗PC ⇔ Mac でデータ共有）" icon={Cloud}>
+      {!canSync && (
+        <div className="mb-3 flex items-start gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-300">
+          <AlertTriangle size={15} className="mt-0.5 shrink-0" />
+          このバージョンは同期エンジン（libsql）を含んでいません。同期対応版のインストールが必要です。
+        </div>
+      )}
+
+      <div className={`mb-4 flex items-center gap-2 rounded-lg border p-3 text-sm
+        ${enabled ? 'border-green-500/40 bg-green-500/10 text-green-300' : 'border-navy-600 bg-navy-900 text-gray-400'}`}>
+        {enabled ? <CheckCircle2 size={16} /> : <Cloud size={16} />}
+        {enabled
+          ? `同期は有効です${status?.lastSyncAt ? `（最終同期 ${new Date(status.lastSyncAt).toLocaleTimeString()}）` : ''}`
+          : '現在はローカル保存（このPC内のみ）です'}
+        {enabled && status?.lastError && <span className="text-amber-300">／ 注意: {status.lastError}</span>}
+      </div>
+
+      <div className="space-y-3">
+        <label className="block">
+          <span className="mb-1 block text-xs text-gray-400">同期先URL（Tursoの Database URL：libsql://… で始まる）</span>
+          <input value={url} onChange={(e) => setUrl(e.target.value)} className={`${inp} w-full`} placeholder="libsql://your-db-name.turso.io" />
+        </label>
+        <label className="block">
+          <span className="mb-1 block text-xs text-gray-400">認証トークン（Auth Token）</span>
+          <input value={token} onChange={(e) => setToken(e.target.value)} type="password" className={`${inp} w-full`} placeholder="ここにトークンを貼り付け（保存後は再表示されません）" />
+        </label>
+      </div>
+
+      <div className="mt-4 flex flex-wrap items-center gap-3">
+        <button onClick={save} disabled={busy || !canSync} className="flex items-center gap-2 rounded-lg bg-accent px-4 py-2 text-sm font-medium text-white hover:opacity-90 disabled:opacity-50">
+          <Save size={15} /> 保存して再起動
+        </button>
+        {enabled && (
+          <button onClick={syncNow} disabled={busy} className="flex items-center gap-2 rounded-lg border border-navy-600 px-4 py-2 text-sm hover:bg-navy-700 disabled:opacity-50">
+            <RefreshCw size={15} className={busy ? 'animate-spin' : ''} /> 今すぐ同期
+          </button>
+        )}
+        {status?.configured && (
+          <button onClick={disconnect} disabled={busy} className="flex items-center gap-2 rounded-lg border border-red-500/40 px-4 py-2 text-sm text-red-400 hover:bg-red-500/10 disabled:opacity-50">
+            同期を解除
+          </button>
+        )}
+      </div>
+      {msg && <p className="mt-3 break-all text-xs text-green-400">{msg}</p>}
+      <p className="mt-3 text-xs text-gray-500">
+        店舗PCとMacの両方に同じURL・トークンを設定すると、保存内容が自動で共有されます。書き込みのたびに自動同期し、数秒ごとに相手の変更も取り込みます。
+      </p>
+    </Section>
   )
 }
 

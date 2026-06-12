@@ -57,6 +57,11 @@ contextBridge.exposeInMainWorld('api', {
     dashboard: () => ipcRenderer.invoke('stats:dashboard'),
     memberAnalytics: (memberId) => ipcRenderer.invoke('stats:memberAnalytics', memberId)
   },
+  sync: {
+    status: () => ipcRenderer.invoke('sync:status'),
+    setConfig: (data) => ipcRenderer.invoke('sync:setConfig', data),
+    now: () => ipcRenderer.invoke('sync:now')
+  },
   updater: {
     version: () => ipcRenderer.invoke('updater:version'),
     check: () => ipcRenderer.invoke('updater:check'),
