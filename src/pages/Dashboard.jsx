@@ -1,13 +1,18 @@
 import { useEffect, useState } from 'react'
-import { Users, UserCheck, CalendarCheck, AlertTriangle, TicketCheck } from 'lucide-react'
+import { Users, UserCheck, CalendarCheck, AlertTriangle, TicketCheck, Printer, ClipboardCheck } from 'lucide-react'
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts'
 import { useStore } from '../store/useStore'
+import { fmtYearMonth } from '../lib/evaluation'
 
 export default function Dashboard() {
   const [data, setData] = useState(null)
+  const [reminder, setReminder] = useState(null)
   const openMember = useStore((s) => s.openMember)
 
-  useEffect(() => { window.api.stats.dashboard().then(setData) }, [])
+  useEffect(() => {
+    window.api.stats.dashboard().then(setData)
+    window.api.evaluations.reminders().then(setReminder)
+  }, [])
 
   if (!data) return <div className="p-8 text-gray-400">読み込み中…</div>
 
@@ -16,6 +21,11 @@ export default function Dashboard() {
   return (
     <div className="p-8">
       <h1 className="mb-6 text-2xl font-bold">ダッシュボード</h1>
+
+      {/* パフォーマンス記録表 印刷／お渡しリマインダ */}
+      {reminder && reminder.members.length > 0 && (
+        <EvalReminder reminder={reminder} openMember={openMember} />
+      )}
 
       {/* サマリーカード */}
       <div className="mb-6 grid grid-cols-4 gap-4">
@@ -82,6 +92,34 @@ export default function Dashboard() {
             ))}
           </div>
         )}
+      </div>
+    </div>
+  )
+}
+
+function EvalReminder({ reminder, openMember }) {
+  const isPrint = reminder.phase === 'print'
+  const Icon = isPrint ? Printer : ClipboardCheck
+  const title = isPrint
+    ? `パフォーマンス記録表の印刷時期です（${fmtYearMonth(reminder.targetYM)}）`
+    : `パフォーマンス記録表のお渡し状況を確認してください（${fmtYearMonth(reminder.targetYM)}）`
+  const sub = isPrint
+    ? '月末が近づいています。下記の会員のパフォーマンス記録表を印刷しましょう。'
+    : 'お渡し状況（お渡し済み／未お渡し／発行なし）を記録すると、このアラートは消えます。'
+  return (
+    <div className="mb-6 rounded-xl border border-accent-gold/50 bg-accent-gold/10 p-5">
+      <div className="mb-1 flex items-center gap-2 text-sm font-semibold text-gray-100">
+        <Icon size={16} className="text-accent-gold" /> {title}
+      </div>
+      <p className="mb-3 text-xs text-gray-400">{sub}（対象 {reminder.members.length}名）</p>
+      <div className="flex flex-wrap gap-2">
+        {reminder.members.map((m) => (
+          <button key={m.id} onClick={() => openMember(m.id)}
+            className="rounded-lg border border-navy-600 bg-navy-900 px-3 py-2 text-sm hover:border-accent">
+            <span className="font-medium">{m.name}</span>
+            {m.furigana && <span className="ml-2 text-[11px] text-gray-400">{m.furigana}</span>}
+          </button>
+        ))}
       </div>
     </div>
   )

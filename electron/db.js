@@ -245,6 +245,7 @@ function createSchema() {
       weight_kg REAL,
       sets INTEGER,
       reps INTEGER,
+      set_no INTEGER,
       order_index INTEGER DEFAULT 0,
       FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
     );
@@ -284,10 +285,54 @@ function createSchema() {
       value TEXT
     );
 
+    -- 評価シート本体（会員ごと・月次で1枚。member_id + year_month で一意）
+    CREATE TABLE IF NOT EXISTS evaluation_sheets (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      member_id INTEGER NOT NULL,
+      year_month TEXT NOT NULL,
+      issued_at TEXT,
+      trainer_name TEXT,
+      feedback_positive TEXT,
+      feedback_next TEXT,
+      mascot_note TEXT,
+      status TEXT DEFAULT 'issued',
+      created_at TEXT DEFAULT (datetime('now','localtime')),
+      updated_at TEXT DEFAULT (datetime('now','localtime')),
+      UNIQUE (member_id, year_month),
+      FOREIGN KEY (member_id) REFERENCES members(id) ON DELETE CASCADE
+    );
+
+    -- 評価シートの種目別記録（基準種目マスタは src/lib/evaluation.js に定義）
+    CREATE TABLE IF NOT EXISTS evaluation_records (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      sheet_id INTEGER NOT NULL,
+      exercise_key TEXT NOT NULL,
+      weight REAL,
+      reps INTEGER,
+      seconds INTEGER,
+      note TEXT,
+      FOREIGN KEY (sheet_id) REFERENCES evaluation_sheets(id) ON DELETE CASCADE
+    );
+
     CREATE INDEX IF NOT EXISTS idx_members_status ON members(status);
     CREATE INDEX IF NOT EXISTS idx_tickets_member ON tickets(member_id);
     CREATE INDEX IF NOT EXISTS idx_sessions_member ON sessions(member_id);
     CREATE INDEX IF NOT EXISTS idx_daily_member ON daily_logs(member_id);
+    -- 評価シートのお渡し状況（月初の運用チェック用）。発行なしも記録できる。
+    -- status: 'handed'（お渡し済み）/ 'not_handed'（未お渡し）/ 'none'（発行なし）
+    CREATE TABLE IF NOT EXISTS evaluation_handovers (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      member_id INTEGER NOT NULL,
+      year_month TEXT NOT NULL,
+      status TEXT NOT NULL,
+      recorded_at TEXT DEFAULT (datetime('now','localtime')),
+      UNIQUE (member_id, year_month),
+      FOREIGN KEY (member_id) REFERENCES members(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_evalsheets_member ON evaluation_sheets(member_id);
+    CREATE INDEX IF NOT EXISTS idx_evalrecords_sheet ON evaluation_records(sheet_id);
+    CREATE INDEX IF NOT EXISTS idx_evalhandover_member ON evaluation_handovers(member_id);
   `)
 
   migrate()
@@ -305,6 +350,9 @@ function migrate() {
   if (!m.includes('member_code')) db.exec('ALTER TABLE members ADD COLUMN member_code TEXT')
   const s = cols('sessions')
   if (!s.includes('usage_status')) db.exec('ALTER TABLE sessions ADD COLUMN usage_status TEXT')
+  // セットごとの記録（1行=1セット）に対応する set_no 列。旧データは NULL のまま。
+  const se = cols('session_exercises')
+  if (!se.includes('set_no')) db.exec('ALTER TABLE session_exercises ADD COLUMN set_no INTEGER')
 
   migratePresetsV2()
 }

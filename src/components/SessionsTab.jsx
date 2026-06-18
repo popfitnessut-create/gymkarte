@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Plus, Trash2, Save, Dumbbell, ChevronDown, ChevronUp, AlertTriangle, CheckCircle2 } from 'lucide-react'
+import { Plus, Trash2, Save, Dumbbell, ChevronDown, ChevronUp, AlertTriangle, CheckCircle2, X } from 'lucide-react'
 import { usageLabel, MUSCLE_OPTIONS, MONTHLY_LIMITS } from '../lib/plans'
 
 // セッション記録タブ：行カード型。新規は下へ追加。日次カルテ統合。
@@ -155,18 +155,14 @@ function SessionCard({ session, member, trainers, presets, remaining, onSave, on
     const m = session?.muscles || []
     return [m[0] || '', m[1] || '']
   })
-  // 種目を「ベンチプレス 60kg×3セット×10回」の形で1行テキスト化
-  const exToLine = (e) => {
-    const parts = [e.exercise_name]
-    if (e.weight_kg !== '' && e.weight_kg != null) parts.push(`${e.weight_kg}kg`)
-    const sr = []
-    if (e.sets !== '' && e.sets != null) sr.push(`${e.sets}セット`)
-    if (e.reps !== '' && e.reps != null) sr.push(`${e.reps}回`)
-    return parts.join(' ') + (sr.length ? ` ${sr.join('×')}` : '')
-  }
-  // メニューは自由記述（1行=1種目）。既存の構造化データは行テキストへ変換して表示
-  const [menuText, setMenuText] = useState(() =>
-    (session?.exercises || []).map(exToLine).join('\n')
+  // メニューは種目ごとに「セットの配列」を持つ。各セットは { weight_kg, reps }。
+  const [rows, setRows] = useState(() =>
+    (session?.exercises || []).map((e) => ({
+      exercise_name: e.exercise_name || '',
+      sets: Array.isArray(e.sets) && e.sets.length
+        ? e.sets.map((st) => ({ weight_kg: st.weight_kg ?? '', reps: st.reps ?? '' }))
+        : [{ weight_kg: e.weight_kg ?? '', reps: e.reps ?? '' }]
+    }))
   )
   // 日次カルテは自由記述テキストのみ（member_commentに保存）
   const [dailyText, setDailyText] = useState(() => session?.daily?.member_comment ?? '')
@@ -174,17 +170,23 @@ function SessionCard({ session, member, trainers, presets, remaining, onSave, on
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }))
   const setMuscle = (i, v) => setMuscles((arr) => arr.map((x, idx) => (idx === i ? v : x)))
 
-  // メニュー行（空行を除く）。1行=1種目
-  const menuLines = useMemo(
-    () => menuText.split('\n').map((l) => l.trim()).filter(Boolean),
-    [menuText]
-  )
+  // 種目名の変更
+  const setExName = (i, v) => setRows((arr) => arr.map((r, idx) => (idx === i ? { ...r, exercise_name: v } : r)))
+  // セット内の値（重量・回数）の変更
+  const setSet = (i, j, k, v) => setRows((arr) => arr.map((r, idx) =>
+    idx === i ? { ...r, sets: r.sets.map((st, sj) => (sj === j ? { ...st, [k]: v } : st)) } : r))
+  // セット追加（直前セットの重量を引き継ぐと入力が楽）
+  const addSet = (i) => setRows((arr) => arr.map((r, idx) =>
+    idx === i ? { ...r, sets: [...r.sets, { weight_kg: r.sets[r.sets.length - 1]?.weight_kg ?? '', reps: '' }] } : r))
+  const removeSet = (i, j) => setRows((arr) => arr.map((r, idx) =>
+    idx === i ? { ...r, sets: r.sets.length > 1 ? r.sets.filter((_, sj) => sj !== j) : r.sets } : r))
+  const addRow = (name = '') => setRows((arr) => [...arr, { exercise_name: name, sets: [{ weight_kg: '', reps: '' }] }])
+  const removeRow = (i) => setRows((arr) => arr.filter((_, idx) => idx !== i))
 
-  // プリセット種目をメニュー末尾に1行追加
-  const addPreset = (name) => {
-    if (!name) return
-    setMenuText((t) => (t.trim() ? `${t.replace(/\n+$/, '')}\n${name}` : name))
-  }
+  // 種目名が入っている行だけ有効
+  const validRows = useMemo(() => rows.filter((r) => String(r.exercise_name || '').trim()), [rows])
+  // 折りたたみ表示用に「ベンチプレス 60kg×10回, 60kg×8回」の形へ
+  const menuLines = useMemo(() => validRows.map(rowToLine), [validRows])
 
   const handleSave = async () => {
     setSaving(true)
@@ -196,7 +198,10 @@ function SessionCard({ session, member, trainers, presets, remaining, onSave, on
       usage_status: form.usage_status,
       consume_ticket: planType === 'ticket' && form.consume_ticket,
       muscles: muscles.filter(Boolean),
-      exercises: menuLines.map((line) => ({ exercise_name: line })),
+      exercises: validRows.map((r) => ({
+        exercise_name: String(r.exercise_name).trim(),
+        sets: r.sets.map((st) => ({ weight_kg: st.weight_kg, reps: st.reps }))
+      })),
       daily: { member_comment: dailyText }
     }
     await onSave(payload)
@@ -263,31 +268,66 @@ function SessionCard({ session, member, trainers, presets, remaining, onSave, on
             </label>
           )}
 
-          {/* メニュー（プリセット選択 + 自由記述） */}
+          {/* メニュー（種目・重量・回数をプリセット選択／セットごとに回数を記録） */}
           <div className="mt-4">
             <div className="mb-2 flex items-center gap-2">
               <p className="text-xs text-gray-400">トレーニングメニュー</p>
-              <select value="" onChange={(e) => { addPreset(e.target.value); e.target.value = '' }} className={`${inp} ml-auto w-56`}>
+              <span className="text-[11px] text-gray-500">重量・回数を選択（セットごとに記録／前月比・記録表に自動反映）</span>
+              <select value="" onChange={(e) => { if (e.target.value) addRow(e.target.value); e.target.value = '' }} className={`${inp} ml-auto w-56`}>
                 <option value="">＋ プリセット種目から追加</option>
                 {presets.map((p) => <option key={p.id} value={p.name}>{p.name}</option>)}
               </select>
             </div>
-            <textarea
-              rows={3}
-              value={menuText}
-              onChange={(e) => setMenuText(e.target.value)}
-              placeholder={'1行につき1種目を入力（手動入力可）\n例）ベンチプレス 60kg×3セット×10回\nスクワット 80kg×3×10'}
-              className={`${inp} font-mono leading-relaxed`}
-            />
-            {menuLines.length > 0 && (
-              <div className="mt-2 overflow-hidden rounded-lg border border-navy-700">
-                {menuLines.map((line, i) => (
-                  <div key={i} className="flex items-center gap-1.5 border-b border-navy-700 bg-navy-900 px-3 py-1.5 text-xs text-gray-300 last:border-b-0">
-                    <Dumbbell size={11} className="shrink-0 text-gray-500" />{line}
+
+            <div className="space-y-3">
+              {rows.map((r, i) => (
+                <div key={i} className="rounded-lg border border-navy-700 bg-navy-900 p-3">
+                  <div className="mb-2 flex items-center gap-2">
+                    <select value={presets.some((p) => p.name === r.exercise_name) ? r.exercise_name : (r.exercise_name ? '__custom__' : '')}
+                      onChange={(e) => { if (e.target.value !== '__custom__') setExName(i, e.target.value) }} className={`${inpSm} flex-1`}>
+                      <option value="">種目を選択</option>
+                      {presets.map((p) => <option key={p.id} value={p.name}>{p.name}</option>)}
+                      {r.exercise_name && !presets.some((p) => p.name === r.exercise_name) && (
+                        <option value="__custom__">{r.exercise_name}（旧データ）</option>
+                      )}
+                    </select>
+                    <button onClick={() => removeRow(i)} className="shrink-0 text-gray-400 hover:text-red-400" title="この種目を削除">
+                      <X size={16} />
+                    </button>
                   </div>
-                ))}
-              </div>
-            )}
+
+                  <div className="space-y-1.5">
+                    {r.sets.map((st, j) => (
+                      <div key={j} className="grid grid-cols-[52px_1fr_1fr_28px] items-center gap-2">
+                        <span className="text-[11px] text-gray-400">{j + 1}セット</span>
+                        <select value={st.weight_kg === '' || st.weight_kg == null ? '' : String(st.weight_kg)}
+                          onChange={(e) => setSet(i, j, 'weight_kg', e.target.value)} className={inpSm}>
+                          <option value="">重量 ―</option>
+                          {weightOptionsFor(st.weight_kg).map((w) => <option key={w} value={w}>{w}kg</option>)}
+                        </select>
+                        <select value={st.reps === '' || st.reps == null ? '' : String(st.reps)}
+                          onChange={(e) => setSet(i, j, 'reps', e.target.value)} className={inpSm}>
+                          <option value="">回数 ―</option>
+                          {REP_OPTIONS.map((n) => <option key={n} value={n}>{n}回</option>)}
+                        </select>
+                        <button onClick={() => removeSet(i, j)} disabled={r.sets.length <= 1}
+                          className="flex justify-center text-gray-400 hover:text-red-400 disabled:opacity-30" title="このセットを削除">
+                          <X size={13} />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+
+                  <button onClick={() => addSet(i)} className="mt-2 flex items-center gap-1 text-[11px] text-accent hover:underline">
+                    <Plus size={12} /> セットを追加
+                  </button>
+                </div>
+              ))}
+            </div>
+
+            <button onClick={() => addRow()} className="mt-3 flex items-center gap-1.5 rounded-lg border border-dashed border-navy-600 px-3 py-1.5 text-xs text-gray-400 hover:border-accent hover:text-accent">
+              <Plus size={13} /> 種目を追加
+            </button>
           </div>
 
           {/* 日次カルテ（自由記述テキストのみ） */}
@@ -318,6 +358,29 @@ function SessionCard({ session, member, trainers, presets, remaining, onSave, on
 
 const inp = 'w-full rounded-lg border border-navy-600 bg-navy-900 px-3 py-2 text-sm outline-none focus:border-accent'
 const inpSm = 'w-full rounded-lg border border-navy-600 bg-navy-900 px-2 py-1.5 text-xs outline-none focus:border-accent'
+
+// 重量プリセット: 0kg〜80kg を 0.5kg刻み
+const WEIGHT_OPTIONS = Array.from({ length: 161 }, (_, i) => i * 0.5)
+const REP_OPTIONS = Array.from({ length: 30 }, (_, i) => i + 1)
+
+// 旧データなどでプリセット外の重量を持つ場合、その値も選択肢に含める
+function weightOptionsFor(cur) {
+  const n = cur === '' || cur == null ? null : Number(cur)
+  if (n == null || Number.isNaN(n) || WEIGHT_OPTIONS.includes(n)) return WEIGHT_OPTIONS
+  return [...WEIGHT_OPTIONS, n].sort((a, b) => a - b)
+}
+
+// 種目（セット配列）を「ベンチプレス 60kg×10回, 60kg×8回」の形に整形
+function rowToLine(r) {
+  const name = String(r.exercise_name).trim()
+  const segs = (r.sets || []).map((st) => {
+    const p = []
+    if (st.weight_kg !== '' && st.weight_kg != null) p.push(`${st.weight_kg}kg`)
+    if (st.reps !== '' && st.reps != null) p.push(`${st.reps}回`)
+    return p.join('×')
+  }).filter(Boolean)
+  return name + (segs.length ? ` ${segs.join(', ')}` : '')
+}
 
 function L({ label, full, children }) {
   return (

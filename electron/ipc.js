@@ -76,17 +76,20 @@ function registerIpc() {
     const get = db.prepare('SELECT * FROM members WHERE id = ?')
     const rem = db.prepare('SELECT COALESCE(SUM(remaining_count),0) AS r FROM tickets WHERE member_id = ?')
     const last = db.prepare('SELECT id, session_date, next_memo FROM sessions WHERE member_id = ? ORDER BY session_date DESC, id DESC LIMIT 1')
-    const lastEx = db.prepare('SELECT exercise_name, weight_kg, sets, reps FROM session_exercises WHERE session_id = ? ORDER BY order_index')
+    const lastEx = db.prepare('SELECT exercise_name, weight_kg, sets, reps, set_no FROM session_exercises WHERE session_id = ? ORDER BY order_index')
     const recent3 = db.prepare('SELECT id, session_date FROM sessions WHERE member_id = ? ORDER BY session_date DESC, id DESC LIMIT 3')
     const sessMuscles = db.prepare('SELECT muscle_name FROM session_muscles WHERE session_id = ?')
-    const exLine = (e) => {
-      const parts = [e.exercise_name]
-      if (e.weight_kg != null) parts.push(`${e.weight_kg}kg`)
-      const sr = []
-      if (e.sets != null) sr.push(`${e.sets}セット`)
-      if (e.reps != null) sr.push(`${e.reps}回`)
-      return parts.join(' ') + (sr.length ? ` ${sr.join('×')}` : '')
+    // 種目（セット配列）を「ベンチプレス 60kg×10回, 60kg×8回」の形へ整形
+    const exLineG = (e) => {
+      const segs = (e.sets || []).map((st) => {
+        const p = []
+        if (st.weight_kg != null) p.push(`${st.weight_kg}kg`)
+        if (st.reps != null) p.push(`${st.reps}回`)
+        return p.join('×')
+      }).filter(Boolean)
+      return e.exercise_name + (segs.length ? ` ${segs.join(', ')}` : '')
     }
+    const menuOf = (sid) => groupExercises(lastEx.all(sid)).map(exLineG)
     return ids.map((id) => {
       const m = get.get(id)
       if (!m) return null
@@ -94,19 +97,10 @@ function registerIpc() {
       const recent = recent3.all(id).map((r) => ({
         date: r.session_date,
         muscles: sessMuscles.all(r.id).map((x) => x.muscle_name),
-        menu: lastEx.all(r.id).map(exLine)
+        menu: menuOf(r.id)
       }))
       let lastMenu = []
-      if (l) {
-        lastMenu = lastEx.all(l.id).map((e) => {
-          const parts = [e.exercise_name]
-          if (e.weight_kg != null) parts.push(`${e.weight_kg}kg`)
-          const sr = []
-          if (e.sets != null) sr.push(`${e.sets}セット`)
-          if (e.reps != null) sr.push(`${e.reps}回`)
-          return parts.join(' ') + (sr.length ? ` ${sr.join('×')}` : '')
-        })
-      }
+      if (l) lastMenu = menuOf(l.id)
       return {
         ...m,
         remaining_count: rem.get(id).r,
@@ -132,6 +126,192 @@ function registerIpc() {
   registerBackupIpc()
   registerExcelIpc()
   registerSyncIpc()
+  registerEvaluationIpc()
+}
+
+/* ===================== 評価シート ===================== */
+function registerEvaluationIpc() {
+  const sheetRecords = (db, sheetId) =>
+    db.prepare('SELECT exercise_key, weight, reps, seconds, note FROM evaluation_records WHERE sheet_id = ?').all(sheetId)
+
+  // 会員の発行済みシート一覧（発行月の降順）。各シートに種目記録を添付
+  ipcMain.handle('evaluations:list', (_e, memberId) => {
+    const db = getDb()
+    const sheets = db.prepare('SELECT * FROM evaluation_sheets WHERE member_id = ? ORDER BY year_month DESC, id DESC').all(memberId)
+    return sheets.map((s) => ({ ...s, records: sheetRecords(db, s.id) }))
+  })
+
+  // 単一シート取得（会員ID＋対象月）。無ければ null
+  ipcMain.handle('evaluations:get', (_e, { member_id, year_month }) => {
+    const db = getDb()
+    const s = db.prepare('SELECT * FROM evaluation_sheets WHERE member_id = ? AND year_month = ?').get(member_id, year_month)
+    if (!s) return null
+    return { ...s, records: sheetRecords(db, s.id) }
+  })
+
+  // グラフ用：会員の全シートの種目記録を時系列（年月昇順）で返す
+  // [{ year_month, exercise_key, weight, reps, seconds }]
+  ipcMain.handle('evaluations:history', (_e, memberId) => {
+    const db = getDb()
+    return db.prepare(`
+      SELECT es.year_month, er.exercise_key, er.weight, er.reps, er.seconds
+      FROM evaluation_records er
+      JOIN evaluation_sheets es ON es.id = er.sheet_id
+      WHERE es.member_id = ?
+      ORDER BY es.year_month ASC, er.id ASC`).all(memberId)
+  })
+
+  // 保存・発行（member_id + year_month で upsert）。種目記録は洗い替え。
+  // feedback_positive はサーバ側でも必須チェック（空なら発行不可）。
+  ipcMain.handle('evaluations:save', (_e, d) => {
+    const db = getDb()
+    const status = d.status === 'draft' ? 'draft' : 'issued'
+    const positive = (d.feedback_positive ?? '').toString().trim()
+    // 発行（issued）時のみ「必ず褒める欄」を必須に。下書き（draft）は空でも保存可。
+    if (status === 'issued' && !positive) return { ok: false, error: 'feedback_positive_required' }
+    if (!d.member_id || !d.year_month) return { ok: false, error: 'invalid_args' }
+
+    const tx = db.transaction((data) => {
+      const existing = db.prepare('SELECT id FROM evaluation_sheets WHERE member_id = ? AND year_month = ?')
+        .get(data.member_id, data.year_month)
+      let sheetId
+      if (existing) {
+        sheetId = existing.id
+        db.prepare(`UPDATE evaluation_sheets SET
+          issued_at=@issued_at, trainer_name=@trainer_name,
+          feedback_positive=@feedback_positive, feedback_next=@feedback_next, mascot_note=@mascot_note,
+          status=@status, updated_at=datetime('now','localtime') WHERE id=@id`).run({
+          id: sheetId,
+          issued_at: data.issued_at ?? new Date().toISOString(),
+          trainer_name: data.trainer_name ?? null,
+          feedback_positive: positive,
+          feedback_next: data.feedback_next ?? null,
+          mascot_note: data.mascot_note ?? null,
+          status
+        })
+        db.prepare('DELETE FROM evaluation_records WHERE sheet_id = ?').run(sheetId)
+      } else {
+        const info = db.prepare(`INSERT INTO evaluation_sheets
+          (member_id, year_month, issued_at, trainer_name, feedback_positive, feedback_next, mascot_note, status)
+          VALUES (@member_id, @year_month, @issued_at, @trainer_name, @feedback_positive, @feedback_next, @mascot_note, @status)`)
+          .run({
+            member_id: data.member_id,
+            year_month: data.year_month,
+            issued_at: data.issued_at ?? new Date().toISOString(),
+            trainer_name: data.trainer_name ?? null,
+            feedback_positive: positive,
+            feedback_next: data.feedback_next ?? null,
+            mascot_note: data.mascot_note ?? null,
+            status
+          })
+        sheetId = info.lastInsertRowid
+      }
+
+      const ins = db.prepare(`INSERT INTO evaluation_records
+        (sheet_id, exercise_key, weight, reps, seconds, note) VALUES (?, ?, ?, ?, ?, ?)`)
+      ;(Array.isArray(data.records) ? data.records : []).forEach((r) => {
+        if (!r || !r.exercise_key) return
+        const w = numOrNull(r.weight)
+        const reps = numOrNull(r.reps)
+        const sec = numOrNull(r.seconds)
+        const note = r.note != null && String(r.note).trim() !== '' ? String(r.note) : null
+        // 全項目空の種目はスキップ（データ点を作らない）
+        if (w == null && reps == null && sec == null && note == null) return
+        ins.run(sheetId, r.exercise_key, w, reps, sec, note)
+      })
+      return sheetId
+    })
+    const sheetId = tx(d)
+    const s = db.prepare('SELECT * FROM evaluation_sheets WHERE id = ?').get(sheetId)
+    return { ok: true, sheet: { ...s, records: sheetRecords(db, sheetId) } }
+  })
+
+  ipcMain.handle('evaluations:delete', (_e, id) => {
+    getDb().prepare('DELETE FROM evaluation_sheets WHERE id = ?').run(id)
+    return { ok: true }
+  })
+
+  // セッション記録（session_exercises）から、種目別・月別の代表値を集計して返す。
+  // 評価シートの数値を手入力せず自動反映するための元データ。
+  // 各 (種目, 月) について最大重量・最大回数を採用。
+  // 戻り値: [{ name, ym, weight, reps }]（月昇順）
+  ipcMain.handle('evaluations:performance', (_e, memberId) => {
+    const db = getDb()
+    return db.prepare(`
+      SELECT se.exercise_name AS name, substr(s.session_date,1,7) AS ym,
+             MAX(se.weight_kg) AS weight, MAX(se.reps) AS reps
+      FROM session_exercises se
+      JOIN sessions s ON s.id = se.session_id
+      WHERE s.member_id = ? AND s.session_date IS NOT NULL
+        AND se.exercise_name IS NOT NULL AND TRIM(se.exercise_name) <> ''
+      GROUP BY se.exercise_name, ym
+      ORDER BY ym ASC`).all(memberId)
+  })
+
+  // お渡し状況の取得（会員の全月分）
+  ipcMain.handle('evaluations:handovers', (_e, memberId) =>
+    getDb().prepare('SELECT year_month, status, recorded_at FROM evaluation_handovers WHERE member_id = ?').all(memberId))
+
+  // お渡し状況の保存（upsert）。status: handed | not_handed | none
+  ipcMain.handle('evaluations:setHandover', (_e, { member_id, year_month, status }) => {
+    const allowed = ['handed', 'not_handed', 'none']
+    if (!member_id || !year_month || !allowed.includes(status)) return { ok: false, error: 'invalid_args' }
+    getDb().prepare(`INSERT INTO evaluation_handovers (member_id, year_month, status, recorded_at)
+      VALUES (?, ?, ?, datetime('now','localtime'))
+      ON CONFLICT(member_id, year_month) DO UPDATE SET status = excluded.status, recorded_at = excluded.recorded_at`)
+      .run(member_id, year_month, status)
+    return { ok: true }
+  })
+
+  // お渡し状況の削除（誤操作の取り消し用）
+  ipcMain.handle('evaluations:clearHandover', (_e, { member_id, year_month }) => {
+    getDb().prepare('DELETE FROM evaluation_handovers WHERE member_id = ? AND year_month = ?').run(member_id, year_month)
+    return { ok: true }
+  })
+
+  // 印刷/お渡しリマインダ。月末2日前〜は当月の印刷を、月初は前月のお渡し確認を促す。
+  // お渡し状況（handed/not_handed/none）が記録済みの会員は対象外。
+  ipcMain.handle('evaluations:reminders', () => {
+    const db = getDb()
+    const now = new Date()
+    const y = now.getFullYear(); const mo = now.getMonth(); const day = now.getDate()
+    const lastDay = new Date(y, mo + 1, 0).getDate()
+    const cur = `${y}-${pad2(mo + 1)}`
+    const prevD = new Date(y, mo - 1, 1)
+    const prev = `${prevD.getFullYear()}-${pad2(prevD.getMonth() + 1)}`
+    const phase = day >= lastDay - 2 ? 'print' : 'handover'
+    const targetYM = phase === 'print' ? cur : prev
+    const members = db.prepare("SELECT id, name, furigana FROM members WHERE status = 'active' ORDER BY furigana, name").all()
+    const hand = db.prepare('SELECT 1 AS x FROM evaluation_handovers WHERE member_id = ? AND year_month = ?')
+    const pending = members.filter((m) => !hand.get(m.id, targetYM))
+    return { targetYM, phase, members: pending }
+  })
+
+  // パフォーマンス記録表をPDFとして発行（保存）。
+  // 現在のレンダラ画面を印刷CSS（@media print）で描画し、A4縦のPDFへ出力する。
+  ipcMain.handle('evaluations:exportPdf', async (e, { memberName, ym } = {}) => {
+    const win = BrowserWindow.fromWebContents(e.sender) || BrowserWindow.getFocusedWindow()
+    if (!win) return { ok: false, error: 'no_window' }
+    const safe = String(memberName || '会員').replace(/[\\/:*?"<>|]/g, '_')
+    const defName = `パフォーマンス記録表_${safe}_${ym || ''}.pdf`.replace(/_\.pdf$/, '.pdf')
+    const { canceled, filePath } = await dialog.showSaveDialog(win, {
+      title: 'パフォーマンス記録表をPDFで保存',
+      defaultPath: defName,
+      filters: [{ name: 'PDF', extensions: ['pdf'] }]
+    })
+    if (canceled || !filePath) return { ok: false, canceled: true }
+    try {
+      const data = await win.webContents.printToPDF({
+        pageSize: 'A4',
+        landscape: false,
+        printBackground: true
+      })
+      fs.writeFileSync(filePath, data)
+      return { ok: true, path: filePath }
+    } catch (err) {
+      return { ok: false, error: err.message }
+    }
+  })
 }
 
 /* ===================== クラウド同期（店舗PC ⇔ Mac 共有） ===================== */
@@ -422,9 +602,10 @@ function registerStatsIpc() {
 
     // 種目別の重量推移
     const exRows = db.prepare(`
-      SELECT se.exercise_name, se.weight_kg, s.session_date
+      SELECT se.exercise_name, MAX(se.weight_kg) AS weight_kg, s.session_date
       FROM session_exercises se JOIN sessions s ON s.id = se.session_id
       WHERE s.member_id = ? AND se.weight_kg IS NOT NULL AND s.session_date IS NOT NULL
+      GROUP BY se.exercise_name, s.session_date
       ORDER BY s.session_date`).all(memberId)
     const exercises = {}
     for (const r of exRows) {
@@ -642,22 +823,56 @@ function insertMuscles(db, sid, muscles) {
 function insertExercises(db, sid, exercises) {
   if (!Array.isArray(exercises)) return
   const ins = db.prepare(`INSERT INTO session_exercises
-    (session_id, exercise_name, weight_kg, sets, reps, order_index) VALUES (?, ?, ?, ?, ?, ?)`)
-  exercises.forEach((ex, i) => {
+    (session_id, exercise_name, weight_kg, sets, reps, set_no, order_index) VALUES (?, ?, ?, ?, ?, ?, ?)`)
+  const num = (v) => (v != null && v !== '' ? Number(v) : null)
+  let order = 0
+  exercises.forEach((ex) => {
     if (!ex || !ex.exercise_name) return
-    ins.run(sid, ex.exercise_name,
-      ex.weight_kg != null && ex.weight_kg !== '' ? Number(ex.weight_kg) : null,
-      ex.sets != null && ex.sets !== '' ? Number(ex.sets) : null,
-      ex.reps != null && ex.reps !== '' ? Number(ex.reps) : null,
-      i)
+    if (Array.isArray(ex.sets)) {
+      // 新形式: sets はセットごとの { weight_kg, reps } 配列。1セット=1行で保存。
+      const list = ex.sets.filter((st) => st && (
+        (st.weight_kg != null && st.weight_kg !== '') || (st.reps != null && st.reps !== '')))
+      const total = list.length
+      if (total === 0) {
+        // 種目だけ選んで数値未入力でも、種目行は1つ残す
+        ins.run(sid, ex.exercise_name, null, null, null, 1, order++)
+        return
+      }
+      list.forEach((st, i) => {
+        ins.run(sid, ex.exercise_name, num(st.weight_kg), total, num(st.reps), i + 1, order++)
+      })
+    } else {
+      // 旧形式: スカラー weight_kg/sets/reps（後方互換）
+      ins.run(sid, ex.exercise_name, num(ex.weight_kg), num(ex.sets), num(ex.reps), 1, order++)
+    }
   })
+}
+
+// session_exercises の生行（1行=1セット）を種目単位へ再構成。
+// set_no===1 または NULL（旧データ）で新しい種目グループを開始。
+function groupExercises(rows) {
+  const out = []
+  for (const r of rows) {
+    if (r.set_no == null) {
+      // 旧データ: 1行=1種目。sets回数ぶんのセットへ展開
+      const count = r.sets && r.sets > 1 ? r.sets : 1
+      const sets = Array.from({ length: count }, () => ({ weight_kg: r.weight_kg, reps: r.reps }))
+      out.push({ exercise_name: r.exercise_name, sets })
+    } else if (r.set_no === 1 || out.length === 0) {
+      out.push({ exercise_name: r.exercise_name, sets: [{ weight_kg: r.weight_kg, reps: r.reps }] })
+    } else {
+      out[out.length - 1].sets.push({ weight_kg: r.weight_kg, reps: r.reps })
+    }
+  }
+  return out
 }
 
 function getSessionFull(db, sid) {
   const s = db.prepare('SELECT * FROM sessions WHERE id = ?').get(sid)
   if (!s) return null
   s.muscles = db.prepare('SELECT muscle_name FROM session_muscles WHERE session_id = ?').all(sid).map((r) => r.muscle_name)
-  s.exercises = db.prepare('SELECT * FROM session_exercises WHERE session_id = ? ORDER BY order_index').all(sid)
+  const rawEx = db.prepare('SELECT * FROM session_exercises WHERE session_id = ? ORDER BY order_index').all(sid)
+  s.exercises = groupExercises(rawEx)
   s.menu = s.exercises.map((e) => e.exercise_name)
   if (s.session_date) s.daily = db.prepare('SELECT * FROM daily_logs WHERE member_id = ? AND log_date = ?').get(s.member_id, String(s.session_date).slice(0, 10)) || null
   return s

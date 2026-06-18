@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Search, UserPlus, AlertTriangle, X, Layers } from 'lucide-react'
+import { Search, UserPlus, AlertTriangle, X, Layers, Printer, ClipboardCheck } from 'lucide-react'
 import { useStore } from '../store/useStore'
 import { buildIndex, runSearch, highlightName } from '../lib/search'
 import { STATUS_LABEL, fmtDate, memberCode } from '../lib/format'
@@ -19,6 +19,8 @@ export default function MemberList() {
   const [query, setQuery] = useState('')
   const [showNew, setShowNew] = useState(false)
   const [checked, setChecked] = useState([]) // マルチ展開で選択中のID
+  const [evalPending, setEvalPending] = useState(new Set()) // 記録表のお渡し/印刷が未対応の会員ID
+  const [evalPhase, setEvalPhase] = useState('handover')    // print | handover
   const openMember = useStore((s) => s.openMember)
   const openMulti = useStore((s) => s.openMulti)
 
@@ -33,6 +35,14 @@ export default function MemberList() {
     window.api.members.list({ status: filter }).then(setMembers)
 
   useEffect(() => { load() }, [filter])
+
+  // パフォーマンス記録表の印刷／お渡しリマインダ（お渡し状況を保存済みの会員はSetに含まれない）
+  useEffect(() => {
+    window.api.evaluations.reminders().then((r) => {
+      setEvalPending(new Set((r?.members || []).map((m) => m.id)))
+      setEvalPhase(r?.phase || 'handover')
+    })
+  }, [filter])
 
   // フィルタ済みの会員からFuseインデックスを構築
   const fuse = useMemo(() => buildIndex(members), [members])
@@ -134,8 +144,16 @@ export default function MemberList() {
                   </td>
                   <td className="px-4 py-3 text-gray-400">{memberCode(m)}</td>
                   <td className="px-4 py-3">
-                    <div className="font-medium">
-                      {parts.map((p, i) => p.hl ? <mark key={i} className="hl">{p.text}</mark> : <span key={i}>{p.text}</span>)}
+                    <div className="flex items-center gap-2 font-medium">
+                      <span>{parts.map((p, i) => p.hl ? <mark key={i} className="hl">{p.text}</mark> : <span key={i}>{p.text}</span>)}</span>
+                      {evalPending.has(m.id) && (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-medium text-amber-700"
+                          title="パフォーマンス記録表のお渡し状況が未記録です">
+                          {evalPhase === 'print'
+                            ? <><Printer size={11} /> 要印刷</>
+                            : <><ClipboardCheck size={11} /> 未お渡し</>}
+                        </span>
+                      )}
                     </div>
                     <div className="text-xs text-gray-500">{m.furigana || '—'}</div>
                   </td>

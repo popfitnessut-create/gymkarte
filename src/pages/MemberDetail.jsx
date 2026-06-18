@@ -7,12 +7,14 @@ import TicketsTab from '../components/TicketsTab'
 import SessionsTab from '../components/SessionsTab'
 import AnalyticsTab from '../components/AnalyticsTab'
 import DailyListTab from '../components/DailyListTab'
+import EvaluationTab from '../components/EvaluationTab'
 
 const tabsFor = (member) => [
   { key: 'basic', label: '基本情報' },
   { key: 'tickets', label: member?.plan_type === 'monthly' ? '月額プラン' : '回数券' },
   { key: 'sessions', label: 'セッション記録' },
   { key: 'daily', label: '日次カルテ一覧' },
+  { key: 'evaluation', label: 'パフォーマンス記録表' },
   { key: 'analytics', label: '分析' }
 ]
 
@@ -79,6 +81,7 @@ export default function MemberDetail() {
       {tab === 'tickets' && <TicketsTab memberId={member.id} onPurchased={handlePurchased} />}
       {tab === 'sessions' && <SessionsTab memberId={member.id} member={member} onRequirePurchase={handleRequirePurchase} />}
       {tab === 'daily' && <DailyListTab memberId={member.id} />}
+      {tab === 'evaluation' && <EvaluationTab memberId={member.id} member={member} />}
       {tab === 'analytics' && <AnalyticsTab memberId={member.id} />}
     </div>
   )

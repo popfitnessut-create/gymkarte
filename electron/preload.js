@@ -57,6 +57,19 @@ contextBridge.exposeInMainWorld('api', {
     dashboard: () => ipcRenderer.invoke('stats:dashboard'),
     memberAnalytics: (memberId) => ipcRenderer.invoke('stats:memberAnalytics', memberId)
   },
+  evaluations: {
+    list: (memberId) => ipcRenderer.invoke('evaluations:list', memberId),
+    get: (args) => ipcRenderer.invoke('evaluations:get', args),
+    history: (memberId) => ipcRenderer.invoke('evaluations:history', memberId),
+    save: (data) => ipcRenderer.invoke('evaluations:save', data),
+    remove: (id) => ipcRenderer.invoke('evaluations:delete', id),
+    performance: (memberId) => ipcRenderer.invoke('evaluations:performance', memberId),
+    handovers: (memberId) => ipcRenderer.invoke('evaluations:handovers', memberId),
+    setHandover: (data) => ipcRenderer.invoke('evaluations:setHandover', data),
+    clearHandover: (data) => ipcRenderer.invoke('evaluations:clearHandover', data),
+    reminders: () => ipcRenderer.invoke('evaluations:reminders'),
+    exportPdf: (args) => ipcRenderer.invoke('evaluations:exportPdf', args)
+  },
   sync: {
     status: () => ipcRenderer.invoke('sync:status'),
     setConfig: (data) => ipcRenderer.invoke('sync:setConfig', data),
