@@ -64,6 +64,7 @@ function initDb(userDataPath) {
     currentDbPath = replicaPath
     try {
       db = new Database(replicaPath, { syncUrl: cfg.syncUrl, authToken: cfg.authToken })
+      applyNamedParamShim(db) // libsqlの名前付きパラメータ不具合を回避（@name → ?）
       syncEnabled = true
       // まずプライマリの最新を取り込む（オフライン時は失敗しても続行）
       safeSync()
@@ -78,6 +79,7 @@ function initDb(userDataPath) {
       lastSyncError = '同期接続に失敗: ' + e.message
       syncEnabled = false
       db = null
+      console.error('同期モード起動に失敗 → ローカルにフォールバック:', e.message)
     }
   }
 
@@ -85,10 +87,44 @@ function initDb(userDataPath) {
   const dbPath = path.join(dir, 'gymkarte.db')
   currentDbPath = dbPath
   db = new Database(dbPath)
+  if (driver === 'libsql') applyNamedParamShim(db) // ローカルモードでも同じ不具合を回避
   try { db.pragma('journal_mode = WAL') } catch (e) { /* libsqlでは未対応の場合あり */ }
   try { db.pragma('foreign_keys = ON') } catch (e) {}
   createSchema()
   return dbPath
+}
+
+// 【重要・libsql の名前付きパラメータ対策】
+// libsql は名前付きパラメータ（@name + オブジェクト渡し）のバインドが効かず、
+// 値が黙って NULL になる（better-sqlite3 では動く）。これにより ipc.js の
+// 「INSERT/UPDATE ... @col ... .run({...})」系が全て値を保存できなくなる。
+// 対策として prepare 時に SQL 内の @name を ? へ置換し、run/get/all に
+// オブジェクトが渡されたら出現順に positional 配列へ並べ替えてから渡す。
+// （positional の ? は libsql でも正しく動くことを確認済み）
+function applyNamedParamShim(database) {
+  const realPrepare = database.prepare.bind(database)
+  database.prepare = (sql) => {
+    const names = []
+    const converted = sql.replace(/@(\w+)/g, (_, n) => { names.push(n); return '?' })
+    const stmt = realPrepare(converted)
+    if (names.length === 0) return stmt
+    const toArgs = (args) => {
+      // 単一オブジェクト渡し（{ col: value, ... }）のときだけ positional へ変換。
+      // それ以外（既に positional 配列・素の値）はそのまま通す。
+      if (args.length === 1 && args[0] && typeof args[0] === 'object' && !Array.isArray(args[0])) {
+        const obj = args[0]
+        return names.map((n) => (obj[n] === undefined ? null : obj[n]))
+      }
+      return args
+    }
+    for (const method of ['run', 'get', 'all']) {
+      if (typeof stmt[method] === 'function') {
+        const real = stmt[method].bind(stmt)
+        stmt[method] = (...args) => real(...toArgs(args))
+      }
+    }
+    return stmt
+  }
 }
 
 // db.prepare をラップし、書き込み（run）後にまとめて同期をスケジュールする。
@@ -133,6 +169,7 @@ function safeSync() {
     return true
   } catch (e) {
     lastSyncError = e.message
+    console.error('[SYNC] db.sync() 失敗:', e.message)
     return false
   }
 }
