@@ -8,6 +8,7 @@ export default function Dashboard() {
   const [data, setData] = useState(null)
   const [reminder, setReminder] = useState(null)
   const openMember = useStore((s) => s.openMember)
+  const openMemberAt = useStore((s) => s.openMemberAt)
 
   useEffect(() => {
     window.api.stats.dashboard().then(setData)
@@ -24,7 +25,7 @@ export default function Dashboard() {
 
       {/* パフォーマンス記録表 印刷／お渡しリマインダ */}
       {reminder && reminder.members.length > 0 && (
-        <EvalReminder reminder={reminder} openMember={openMember} />
+        <EvalReminder reminder={reminder} openMember={openMember} openMemberAt={openMemberAt} />
       )}
 
       {/* サマリーカード */}
@@ -45,7 +46,7 @@ export default function Dashboard() {
               <XAxis dataKey="label" tick={{ fill: '#94a3b8', fontSize: 12 }} axisLine={{ stroke: '#243154' }} tickLine={false} />
               <YAxis allowDecimals={false} tick={{ fill: '#94a3b8', fontSize: 12 }} axisLine={false} tickLine={false} />
               <Tooltip contentStyle={tooltipStyle} cursor={{ fill: '#1a2440' }} labelFormatter={(l) => `${l}`} formatter={(v) => [`${v}件`, '来店']} />
-              <Bar dataKey="count" fill="#2f81f7" radius={[4, 4, 0, 0]} />
+              <Bar dataKey="count" fill="#2f81f7" radius={[4, 4, 0, 0]} isAnimationActive={false} />
             </BarChart>
           </ResponsiveContainer>
         </div>
@@ -97,8 +98,14 @@ export default function Dashboard() {
   )
 }
 
-function EvalReminder({ reminder, openMember }) {
+function EvalReminder({ reminder, openMember, openMemberAt }) {
   const isPrint = reminder.phase === 'print'
+  // リマインダの対象月でパフォーマンス記録表タブを直接開く。
+  // これにより、お渡し記録がリマインダと同じ月に保存され、記録後にアラートが消える。
+  const open = (id) => {
+    if (openMemberAt) openMemberAt(id, { tab: 'evaluation', ym: reminder.targetYM })
+    else openMember(id)
+  }
   const Icon = isPrint ? Printer : ClipboardCheck
   const title = isPrint
     ? `パフォーマンス記録表の印刷時期です（${fmtYearMonth(reminder.targetYM)}）`
@@ -114,7 +121,7 @@ function EvalReminder({ reminder, openMember }) {
       <p className="mb-3 text-xs text-gray-400">{sub}（対象 {reminder.members.length}名）</p>
       <div className="flex flex-wrap gap-2">
         {reminder.members.map((m) => (
-          <button key={m.id} onClick={() => openMember(m.id)}
+          <button key={m.id} onClick={() => open(m.id)}
             className="rounded-lg border border-navy-600 bg-navy-900 px-3 py-2 text-sm hover:border-accent">
             <span className="font-medium">{m.name}</span>
             {m.furigana && <span className="ml-2 text-[11px] text-gray-400">{m.furigana}</span>}

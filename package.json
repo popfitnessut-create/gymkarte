@@ -1,6 +1,6 @@
 {
   "name": "gymkarte",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "パーソナルジム会員カルテ管理デスクトップアプリ",
   "author": "YourGym",
   "main": "electron/main.js",
@@ -49,6 +49,8 @@
     "files": [
       "electron/**/*",
       "dist/**/*",
+      "assets/icon.png",
+      "assets/icon.ico",
       "package.json"
     ],
     "icon": "assets/icon.png",
@@ -61,6 +63,7 @@
       }
     ],
     "win": {
+      "icon": "assets/icon.ico",
       "target": [
         {
           "target": "nsis",
@@ -71,7 +74,11 @@
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
-      "createDesktopShortcut": true
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "installerIcon": "assets/icon.ico",
+      "uninstallerIcon": "assets/icon.ico",
+      "installerHeaderIcon": "assets/icon.ico"
     },
     "mac": {
       "target": "dmg",

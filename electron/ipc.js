@@ -76,17 +76,21 @@ function registerIpc() {
     const get = db.prepare('SELECT * FROM members WHERE id = ?')
     const rem = db.prepare('SELECT COALESCE(SUM(remaining_count),0) AS r FROM tickets WHERE member_id = ?')
     const last = db.prepare('SELECT id, session_date, next_memo FROM sessions WHERE member_id = ? ORDER BY session_date DESC, id DESC LIMIT 1')
-    const lastEx = db.prepare('SELECT exercise_name, weight_kg, sets, reps, set_no FROM session_exercises WHERE session_id = ? ORDER BY order_index')
+    const lastEx = db.prepare('SELECT exercise_name, weight_kg, sets, reps, seconds, child_name, set_no FROM session_exercises WHERE session_id = ? ORDER BY order_index')
     const recent3 = db.prepare('SELECT id, session_date FROM sessions WHERE member_id = ? ORDER BY session_date DESC, id DESC LIMIT 3')
     const sessMuscles = db.prepare('SELECT muscle_name FROM session_muscles WHERE session_id = ?')
-    // 種目（セット配列）を「ベンチプレス 60kg×10回, 60kg×8回」の形へ整形
+    // 種目（セット配列）を「ベンチプレス 60kg×10回」「プランク 60秒」「HIIT: バーピー 20kg×30秒」の形へ整形
     const exLineG = (e) => {
+      const isHiit = String(e.exercise_name || '').toUpperCase() === 'HIIT'
       const segs = (e.sets || []).map((st) => {
         const p = []
+        if (isHiit && st.child_name) p.push(st.child_name)
         if (st.weight_kg != null) p.push(`${st.weight_kg}kg`)
         if (st.reps != null) p.push(`${st.reps}回`)
-        return p.join('×')
+        if (st.seconds != null) p.push(`${st.seconds}秒`)
+        return p.join(isHiit ? ' ' : '×')
       }).filter(Boolean)
+      if (isHiit) return e.exercise_name + (segs.length ? `: ${segs.join(', ')}` : '')
       return e.exercise_name + (segs.length ? ` ${segs.join(', ')}` : '')
     }
     const menuOf = (sid) => groupExercises(lastEx.all(sid)).map(exLineG)
@@ -704,7 +708,8 @@ function registerSessionIpc() {
     const dStmt = db.prepare('SELECT * FROM daily_logs WHERE member_id = ? AND log_date = ?')
     return sessions.map((s) => {
       const muscles = mStmt.all(s.id).map((r) => r.muscle_name)
-      const exercises = eStmt.all(s.id)
+      // 1行=1セットの生データを種目単位へ再構成（セット配列・秒数・HIIT子種目を含む）
+      const exercises = groupExercises(eStmt.all(s.id))
       return {
         ...s,
         muscles,
@@ -823,27 +828,33 @@ function insertMuscles(db, sid, muscles) {
 function insertExercises(db, sid, exercises) {
   if (!Array.isArray(exercises)) return
   const ins = db.prepare(`INSERT INTO session_exercises
-    (session_id, exercise_name, weight_kg, sets, reps, set_no, order_index) VALUES (?, ?, ?, ?, ?, ?, ?)`)
+    (session_id, exercise_name, weight_kg, sets, reps, seconds, child_name, set_no, order_index)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
   const num = (v) => (v != null && v !== '' ? Number(v) : null)
+  const txt = (v) => (v != null && String(v).trim() !== '' ? String(v).trim() : null)
   let order = 0
   exercises.forEach((ex) => {
     if (!ex || !ex.exercise_name) return
     if (Array.isArray(ex.sets)) {
-      // 新形式: sets はセットごとの { weight_kg, reps } 配列。1セット=1行で保存。
+      // 新形式: sets はセット（または HIIT 子種目）ごとの配列。1行=1セット/1子種目で保存。
+      // 各要素: { weight_kg, reps, seconds, child_name }
       const list = ex.sets.filter((st) => st && (
-        (st.weight_kg != null && st.weight_kg !== '') || (st.reps != null && st.reps !== '')))
+        (st.weight_kg != null && st.weight_kg !== '') ||
+        (st.reps != null && st.reps !== '') ||
+        (st.seconds != null && st.seconds !== '') ||
+        (st.child_name != null && String(st.child_name).trim() !== '')))
       const total = list.length
       if (total === 0) {
         // 種目だけ選んで数値未入力でも、種目行は1つ残す
-        ins.run(sid, ex.exercise_name, null, null, null, 1, order++)
+        ins.run(sid, ex.exercise_name, null, null, null, null, null, 1, order++)
         return
       }
       list.forEach((st, i) => {
-        ins.run(sid, ex.exercise_name, num(st.weight_kg), total, num(st.reps), i + 1, order++)
+        ins.run(sid, ex.exercise_name, num(st.weight_kg), total, num(st.reps), num(st.seconds), txt(st.child_name), i + 1, order++)
       })
     } else {
       // 旧形式: スカラー weight_kg/sets/reps（後方互換）
-      ins.run(sid, ex.exercise_name, num(ex.weight_kg), num(ex.sets), num(ex.reps), 1, order++)
+      ins.run(sid, ex.exercise_name, num(ex.weight_kg), num(ex.sets), num(ex.reps), num(ex.seconds), null, 1, order++)
     }
   })
 }
@@ -852,16 +863,17 @@ function insertExercises(db, sid, exercises) {
 // set_no===1 または NULL（旧データ）で新しい種目グループを開始。
 function groupExercises(rows) {
   const out = []
+  const setOf = (r) => ({ weight_kg: r.weight_kg, reps: r.reps, seconds: r.seconds ?? null, child_name: r.child_name ?? null })
   for (const r of rows) {
     if (r.set_no == null) {
       // 旧データ: 1行=1種目。sets回数ぶんのセットへ展開
       const count = r.sets && r.sets > 1 ? r.sets : 1
-      const sets = Array.from({ length: count }, () => ({ weight_kg: r.weight_kg, reps: r.reps }))
+      const sets = Array.from({ length: count }, () => setOf(r))
       out.push({ exercise_name: r.exercise_name, sets })
     } else if (r.set_no === 1 || out.length === 0) {
-      out.push({ exercise_name: r.exercise_name, sets: [{ weight_kg: r.weight_kg, reps: r.reps }] })
+      out.push({ exercise_name: r.exercise_name, sets: [setOf(r)] })
     } else {
-      out[out.length - 1].sets.push({ weight_kg: r.weight_kg, reps: r.reps })
+      out[out.length - 1].sets.push(setOf(r))
     }
   }
   return out

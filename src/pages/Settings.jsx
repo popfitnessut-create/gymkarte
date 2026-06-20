@@ -257,7 +257,7 @@ function UpdateSection() {
     const off = window.api.updater.onStatus(({ status, info }) => {
       switch (status) {
         case 'checking': setStatus('確認中…'); break
-        case 'available': setStatus(`新しいバージョン ${info?.version || ''} が見つかりました`); break
+        case 'available': setStatus(`新しいバージョン ${info?.version || ''} が配信されています。最新版へのバージョンアップを実行してください。`); break
         case 'not-available': setStatus('最新バージョンを使用中です'); setChecking(false); break
         case 'downloading': setStatus('ダウンロード中…'); break
         case 'progress': setStatus(`ダウンロード中… ${info?.percent ?? 0}%`); break

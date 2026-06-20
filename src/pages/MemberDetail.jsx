@@ -21,13 +21,27 @@ const tabsFor = (member) => [
 export default function MemberDetail() {
   const id = useStore((s) => s.selectedMemberId)
   const back = useStore((s) => s.backToList)
-  const [tab, setTab] = useState('basic')
+  const memberInitial = useStore((s) => s.memberInitial)
+  const consumeMemberInitial = useStore((s) => s.consumeMemberInitial)
+  const [tab, setTab] = useState(memberInitial?.tab || 'basic')
+  // リマインダ等から渡された対象月（パフォーマンス記録表タブの初期月）
+  const [initialYm, setInitialYm] = useState(memberInitial?.ym || null)
   const [member, setMember] = useState(null)
   const [pendingSession, setPendingSession] = useState(null) // 回数券残0で保留中のセッション
 
   useEffect(() => {
     if (id) window.api.members.get(id).then(setMember)
   }, [id])
+
+  // 指定付きで開かれた場合は初期タブ・初期月を適用し、一度きりで消費する
+  useEffect(() => {
+    if (memberInitial) {
+      if (memberInitial.tab) setTab(memberInitial.tab)
+      setInitialYm(memberInitial.ym || null)
+      consumeMemberInitial()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id, memberInitial])
 
   // タブ手動切替時は保留中セッションを破棄（購入を中断したケース）
   const goTab = (key) => { setPendingSession(null); setTab(key) }
@@ -81,7 +95,7 @@ export default function MemberDetail() {
       {tab === 'tickets' && <TicketsTab memberId={member.id} onPurchased={handlePurchased} />}
       {tab === 'sessions' && <SessionsTab memberId={member.id} member={member} onRequirePurchase={handleRequirePurchase} />}
       {tab === 'daily' && <DailyListTab memberId={member.id} />}
-      {tab === 'evaluation' && <EvaluationTab memberId={member.id} member={member} />}
+      {tab === 'evaluation' && <EvaluationTab memberId={member.id} member={member} initialYm={initialYm} />}
       {tab === 'analytics' && <AnalyticsTab memberId={member.id} />}
     </div>
   )

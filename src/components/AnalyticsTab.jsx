@@ -82,7 +82,7 @@ export default function AnalyticsTab({ memberId }) {
                   <XAxis dataKey="ym" tick={{ fill: '#94a3b8', fontSize: 11 }} axisLine={{ stroke: '#243154' }} tickLine={false} />
                   <YAxis allowDecimals={false} tick={{ fill: '#94a3b8', fontSize: 11 }} axisLine={false} tickLine={false} />
                   <Tooltip contentStyle={tooltipStyle} formatter={(v) => [`${v}回`, '来店']} />
-                  <Line type="monotone" dataKey="c" stroke="#2f81f7" strokeWidth={2} dot={{ r: 3 }} />
+                  <Line type="monotone" dataKey="c" stroke="#2f81f7" strokeWidth={2} dot={{ r: 3 }} isAnimationActive={false} />
                 </LineChart>
               </ResponsiveContainer>
             </Panel>
@@ -93,6 +93,7 @@ export default function AnalyticsTab({ memberId }) {
                 <ResponsiveContainer width="100%" height={240}>
                   <PieChart>
                     <Pie data={muscleData} dataKey="value" nameKey="name" cx="50%" cy="50%" innerRadius={55} outerRadius={85} paddingAngle={2}
+                      isAnimationActive={false}
                       labelLine={false} label={({ pct }) => (pct >= 8 ? `${pct}%` : '')}>
                       {muscleData.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
                     </Pie>
@@ -120,7 +121,7 @@ export default function AnalyticsTab({ memberId }) {
                   <XAxis dataKey="date" tick={{ fill: '#94a3b8', fontSize: 11 }} axisLine={{ stroke: '#243154' }} tickLine={false} />
                   <YAxis tick={{ fill: '#94a3b8', fontSize: 11 }} axisLine={false} tickLine={false} unit="kg" />
                   <Tooltip contentStyle={tooltipStyle} formatter={(v) => [`${v}kg`, exName]} />
-                  <Line type="monotone" dataKey="weight" stroke="#e3b341" strokeWidth={2} dot={{ r: 3 }} />
+                  <Line type="monotone" dataKey="weight" stroke="#e3b341" strokeWidth={2} dot={{ r: 3 }} isAnimationActive={false} />
                 </LineChart>
               </ResponsiveContainer>
             )}
@@ -137,8 +138,8 @@ export default function AnalyticsTab({ memberId }) {
                   <YAxis yAxisId="f" orientation="right" tick={{ fill: '#94a3b8', fontSize: 11 }} axisLine={false} tickLine={false} unit="%" />
                   <Tooltip contentStyle={tooltipStyle} />
                   <Legend wrapperStyle={{ fontSize: 11, color: '#94a3b8' }} />
-                  <Line yAxisId="w" type="monotone" dataKey="weight_kg" name="体重(kg)" stroke="#2f81f7" strokeWidth={2} dot={{ r: 2 }} connectNulls />
-                  <Line yAxisId="f" type="monotone" dataKey="body_fat_pct" name="体脂肪率(%)" stroke="#34d399" strokeWidth={2} dot={{ r: 2 }} connectNulls />
+                  <Line yAxisId="w" type="monotone" dataKey="weight_kg" name="体重(kg)" stroke="#2f81f7" strokeWidth={2} dot={{ r: 2 }} connectNulls isAnimationActive={false} />
+                  <Line yAxisId="f" type="monotone" dataKey="body_fat_pct" name="体脂肪率(%)" stroke="#34d399" strokeWidth={2} dot={{ r: 2 }} connectNulls isAnimationActive={false} />
                 </LineChart>
               </ResponsiveContainer>
             )}

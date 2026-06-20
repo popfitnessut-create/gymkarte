@@ -155,32 +155,40 @@ function SessionCard({ session, member, trainers, presets, remaining, onSave, on
     const m = session?.muscles || []
     return [m[0] || '', m[1] || '']
   })
-  // メニューは種目ごとに「セットの配列」を持つ。各セットは { weight_kg, reps }。
-  const [rows, setRows] = useState(() =>
-    (session?.exercises || []).map((e) => ({
-      exercise_name: e.exercise_name || '',
-      sets: Array.isArray(e.sets) && e.sets.length
-        ? e.sets.map((st) => ({ weight_kg: st.weight_kg ?? '', reps: st.reps ?? '' }))
-        : [{ weight_kg: e.weight_kg ?? '', reps: e.reps ?? '' }]
-    }))
-  )
+  // メニューは種目ごとに「セットの配列」を持つ。
+  // 通常種目: metric='reps'|'seconds'、各セットは { weight_kg, reps, seconds }。
+  // HIIT種目: isHiit=true、children に { child_name, weight_kg, seconds } を保持。
+  const [rows, setRows] = useState(() => (session?.exercises || []).map(rowFromExercise))
   // 日次カルテは自由記述テキストのみ（member_commentに保存）
   const [dailyText, setDailyText] = useState(() => session?.daily?.member_comment ?? '')
 
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }))
   const setMuscle = (i, v) => setMuscles((arr) => arr.map((x, idx) => (idx === i ? v : x)))
 
-  // 種目名の変更
-  const setExName = (i, v) => setRows((arr) => arr.map((r, idx) => (idx === i ? { ...r, exercise_name: v } : r)))
-  // セット内の値（重量・回数）の変更
+  // 種目名の変更。HIIT⇄通常種目を相互変換する。
+  const changeExercise = (i, v) => setRows((arr) => arr.map((r, idx) => {
+    if (idx !== i) return r
+    if (isHiitName(v)) return r.isHiit ? r : makeHiitRow()
+    return r.isHiit ? makeNormalRow(v) : { ...r, exercise_name: v }
+  }))
+  // 回数/秒数モードの切替（通常種目）
+  const setMetric = (i, metric) => setRows((arr) => arr.map((r, idx) => (idx === i ? { ...r, metric } : r)))
+  // セット内の値（重量・回数・秒数）の変更
   const setSet = (i, j, k, v) => setRows((arr) => arr.map((r, idx) =>
     idx === i ? { ...r, sets: r.sets.map((st, sj) => (sj === j ? { ...st, [k]: v } : st)) } : r))
   // セット追加（直前セットの重量を引き継ぐと入力が楽）
   const addSet = (i) => setRows((arr) => arr.map((r, idx) =>
-    idx === i ? { ...r, sets: [...r.sets, { weight_kg: r.sets[r.sets.length - 1]?.weight_kg ?? '', reps: '' }] } : r))
+    idx === i ? { ...r, sets: [...r.sets, { weight_kg: r.sets[r.sets.length - 1]?.weight_kg ?? '', reps: '', seconds: '' }] } : r))
   const removeSet = (i, j) => setRows((arr) => arr.map((r, idx) =>
     idx === i ? { ...r, sets: r.sets.length > 1 ? r.sets.filter((_, sj) => sj !== j) : r.sets } : r))
-  const addRow = (name = '') => setRows((arr) => [...arr, { exercise_name: name, sets: [{ weight_kg: '', reps: '' }] }])
+  // HIIT子種目の変更・追加・削除
+  const setChild = (i, j, k, v) => setRows((arr) => arr.map((r, idx) =>
+    idx === i ? { ...r, children: r.children.map((c, cj) => (cj === j ? { ...c, [k]: v } : c)) } : r))
+  const addChild = (i) => setRows((arr) => arr.map((r, idx) =>
+    idx === i ? { ...r, children: [...r.children, { child_name: '', weight_kg: '', seconds: '' }] } : r))
+  const removeChild = (i, j) => setRows((arr) => arr.map((r, idx) =>
+    idx === i ? { ...r, children: r.children.length > 1 ? r.children.filter((_, cj) => cj !== j) : r.children } : r))
+  const addRow = (name = '') => setRows((arr) => [...arr, isHiitName(name) ? makeHiitRow() : makeNormalRow(name)])
   const removeRow = (i) => setRows((arr) => arr.filter((_, idx) => idx !== i))
 
   // 種目名が入っている行だけ有効
@@ -198,10 +206,22 @@ function SessionCard({ session, member, trainers, presets, remaining, onSave, on
       usage_status: form.usage_status,
       consume_ticket: planType === 'ticket' && form.consume_ticket,
       muscles: muscles.filter(Boolean),
-      exercises: validRows.map((r) => ({
-        exercise_name: String(r.exercise_name).trim(),
-        sets: r.sets.map((st) => ({ weight_kg: st.weight_kg, reps: st.reps }))
-      })),
+      exercises: validRows.map((r) => {
+        if (r.isHiit) {
+          return {
+            exercise_name: 'HIIT',
+            sets: (r.children || [])
+              .filter((c) => String(c.child_name || '').trim())
+              .map((c) => ({ child_name: String(c.child_name).trim(), weight_kg: c.weight_kg, seconds: c.seconds }))
+          }
+        }
+        return {
+          exercise_name: String(r.exercise_name).trim(),
+          sets: r.sets.map((st) => (r.metric === 'seconds'
+            ? { weight_kg: st.weight_kg, seconds: st.seconds }
+            : { weight_kg: st.weight_kg, reps: st.reps }))
+        }
+      }),
       daily: { member_comment: dailyText }
     }
     await onSave(payload)
@@ -283,44 +303,107 @@ function SessionCard({ session, member, trainers, presets, remaining, onSave, on
               {rows.map((r, i) => (
                 <div key={i} className="rounded-lg border border-navy-700 bg-navy-900 p-3">
                   <div className="mb-2 flex items-center gap-2">
-                    <select value={presets.some((p) => p.name === r.exercise_name) ? r.exercise_name : (r.exercise_name ? '__custom__' : '')}
-                      onChange={(e) => { if (e.target.value !== '__custom__') setExName(i, e.target.value) }} className={`${inpSm} flex-1`}>
+                    <select value={r.isHiit ? 'HIIT' : (presets.some((p) => p.name === r.exercise_name) ? r.exercise_name : (r.exercise_name ? '__custom__' : ''))}
+                      onChange={(e) => { if (e.target.value !== '__custom__') changeExercise(i, e.target.value) }} className={`${inpSm} flex-1`}>
                       <option value="">種目を選択</option>
                       {presets.map((p) => <option key={p.id} value={p.name}>{p.name}</option>)}
-                      {r.exercise_name && !presets.some((p) => p.name === r.exercise_name) && (
+                      {!r.isHiit && r.exercise_name && !presets.some((p) => p.name === r.exercise_name) && (
                         <option value="__custom__">{r.exercise_name}（旧データ）</option>
                       )}
                     </select>
+
+                    {/* 通常種目のみ：回数/秒数モード切替 */}
+                    {!r.isHiit && (
+                      <div className="flex shrink-0 overflow-hidden rounded-md border border-navy-600 text-[11px]">
+                        {[['reps', '回数'], ['seconds', '秒数']].map(([mk, ml]) => (
+                          <button key={mk} type="button" onClick={() => setMetric(i, mk)}
+                            className={`px-2 py-1 ${r.metric === mk ? 'bg-accent text-white' : 'text-gray-400 hover:text-gray-200'}`}>
+                            {ml}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+
                     <button onClick={() => removeRow(i)} className="shrink-0 text-gray-400 hover:text-red-400" title="この種目を削除">
                       <X size={16} />
                     </button>
                   </div>
 
-                  <div className="space-y-1.5">
-                    {r.sets.map((st, j) => (
-                      <div key={j} className="grid grid-cols-[52px_1fr_1fr_28px] items-center gap-2">
-                        <span className="text-[11px] text-gray-400">{j + 1}セット</span>
-                        <select value={st.weight_kg === '' || st.weight_kg == null ? '' : String(st.weight_kg)}
-                          onChange={(e) => setSet(i, j, 'weight_kg', e.target.value)} className={inpSm}>
-                          <option value="">重量 ―</option>
-                          {weightOptionsFor(st.weight_kg).map((w) => <option key={w} value={w}>{w}kg</option>)}
-                        </select>
-                        <select value={st.reps === '' || st.reps == null ? '' : String(st.reps)}
-                          onChange={(e) => setSet(i, j, 'reps', e.target.value)} className={inpSm}>
-                          <option value="">回数 ―</option>
-                          {REP_OPTIONS.map((n) => <option key={n} value={n}>{n}回</option>)}
-                        </select>
-                        <button onClick={() => removeSet(i, j)} disabled={r.sets.length <= 1}
-                          className="flex justify-center text-gray-400 hover:text-red-400 disabled:opacity-30" title="このセットを削除">
-                          <X size={13} />
-                        </button>
+                  {r.isHiit ? (
+                    /* HIIT：子種目・子種目重量・秒数（5秒刻み60秒まで） */
+                    <div>
+                      <div className="mb-1.5 grid grid-cols-[1fr_92px_92px_28px] gap-2 px-0.5 text-[10px] text-gray-500">
+                        <span>子種目</span><span>重量</span><span>秒数</span><span></span>
                       </div>
-                    ))}
-                  </div>
-
-                  <button onClick={() => addSet(i)} className="mt-2 flex items-center gap-1 text-[11px] text-accent hover:underline">
-                    <Plus size={12} /> セットを追加
-                  </button>
+                      <div className="space-y-1.5">
+                        {r.children.map((c, j) => (
+                          <div key={j} className="grid grid-cols-[1fr_92px_92px_28px] items-center gap-2">
+                            <select value={presets.some((p) => p.name === c.child_name) ? c.child_name : (c.child_name ? '__custom__' : '')}
+                              onChange={(e) => { if (e.target.value !== '__custom__') setChild(i, j, 'child_name', e.target.value) }} className={inpSm}>
+                              <option value="">子種目を選択</option>
+                              {presets.filter((p) => !isHiitName(p.name)).map((p) => <option key={p.id} value={p.name}>{p.name}</option>)}
+                              {c.child_name && !presets.some((p) => p.name === c.child_name) && (
+                                <option value="__custom__">{c.child_name}</option>
+                              )}
+                            </select>
+                            <select value={c.weight_kg === '' || c.weight_kg == null ? '' : String(c.weight_kg)}
+                              onChange={(e) => setChild(i, j, 'weight_kg', e.target.value)} className={inpSm}>
+                              <option value="">重量 ―</option>
+                              {weightOptionsFor(c.weight_kg).map((w) => <option key={w} value={w}>{w}kg</option>)}
+                            </select>
+                            <select value={c.seconds === '' || c.seconds == null ? '' : String(c.seconds)}
+                              onChange={(e) => setChild(i, j, 'seconds', e.target.value)} className={inpSm}>
+                              <option value="">秒数 ―</option>
+                              {SECONDS_OPTIONS.map((s) => <option key={s} value={s}>{s}秒</option>)}
+                            </select>
+                            <button onClick={() => removeChild(i, j)} disabled={r.children.length <= 1}
+                              className="flex justify-center text-gray-400 hover:text-red-400 disabled:opacity-30" title="この子種目を削除">
+                              <X size={13} />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                      <button onClick={() => addChild(i)} className="mt-2 flex items-center gap-1 text-[11px] text-accent hover:underline">
+                        <Plus size={12} /> 子種目を追加
+                      </button>
+                    </div>
+                  ) : (
+                    /* 通常種目：セットごとに重量＋（回数 or 秒数） */
+                    <div>
+                      <div className="space-y-1.5">
+                        {r.sets.map((st, j) => (
+                          <div key={j} className="grid grid-cols-[52px_1fr_1fr_28px] items-center gap-2">
+                            <span className="text-[11px] text-gray-400">{j + 1}セット</span>
+                            <select value={st.weight_kg === '' || st.weight_kg == null ? '' : String(st.weight_kg)}
+                              onChange={(e) => setSet(i, j, 'weight_kg', e.target.value)} className={inpSm}>
+                              <option value="">重量 ―</option>
+                              {weightOptionsFor(st.weight_kg).map((w) => <option key={w} value={w}>{w}kg</option>)}
+                            </select>
+                            {r.metric === 'seconds' ? (
+                              <select value={st.seconds === '' || st.seconds == null ? '' : String(st.seconds)}
+                                onChange={(e) => setSet(i, j, 'seconds', e.target.value)} className={inpSm}>
+                                <option value="">秒数 ―</option>
+                                {SECONDS_OPTIONS.map((s) => <option key={s} value={s}>{s}秒</option>)}
+                              </select>
+                            ) : (
+                              <select value={st.reps === '' || st.reps == null ? '' : String(st.reps)}
+                                onChange={(e) => setSet(i, j, 'reps', e.target.value)} className={inpSm}>
+                                <option value="">回数 ―</option>
+                                {REP_OPTIONS.map((n) => <option key={n} value={n}>{n}回</option>)}
+                              </select>
+                            )}
+                            <button onClick={() => removeSet(i, j)} disabled={r.sets.length <= 1}
+                              className="flex justify-center text-gray-400 hover:text-red-400 disabled:opacity-30" title="このセットを削除">
+                              <X size={13} />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                      <button onClick={() => addSet(i)} className="mt-2 flex items-center gap-1 text-[11px] text-accent hover:underline">
+                        <Plus size={12} /> セットを追加
+                      </button>
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
@@ -362,6 +445,41 @@ const inpSm = 'w-full rounded-lg border border-navy-600 bg-navy-900 px-2 py-1.5 
 // 重量プリセット: 0kg〜80kg を 0.5kg刻み
 const WEIGHT_OPTIONS = Array.from({ length: 161 }, (_, i) => i * 0.5)
 const REP_OPTIONS = Array.from({ length: 30 }, (_, i) => i + 1)
+// 秒数プリセット: 5秒刻みで60秒まで
+const SECONDS_OPTIONS = Array.from({ length: 12 }, (_, i) => (i + 1) * 5)
+
+// HIIT種目かどうか（大文字小文字を無視）
+function isHiitName(name) { return String(name || '').toUpperCase() === 'HIIT' }
+
+// 行（フォーム状態）のひな型
+function makeNormalRow(name = '') {
+  return { exercise_name: name, isHiit: false, metric: 'reps', sets: [{ weight_kg: '', reps: '', seconds: '' }], children: [] }
+}
+function makeHiitRow() {
+  return { exercise_name: 'HIIT', isHiit: true, metric: 'seconds', sets: [], children: [{ child_name: '', weight_kg: '', seconds: '' }] }
+}
+
+// 保存済みの種目（グループ済みセット配列）をフォーム行へ復元
+function rowFromExercise(e) {
+  const sets = Array.isArray(e.sets) && e.sets.length
+    ? e.sets
+    : [{ weight_kg: e.weight_kg, reps: e.reps, seconds: e.seconds }]
+  const isHiit = isHiitName(e.exercise_name) || sets.some((s) => s && s.child_name)
+  if (isHiit) {
+    return {
+      exercise_name: 'HIIT', isHiit: true, metric: 'seconds', sets: [],
+      children: sets.map((s) => ({ child_name: s.child_name ?? '', weight_kg: s.weight_kg ?? '', seconds: s.seconds ?? '' }))
+    }
+  }
+  // 秒数モード判定：秒数が入っていて回数が無ければ秒数モード
+  const usesSeconds = sets.some((s) => s && s.seconds != null && s.seconds !== '') &&
+    sets.every((s) => !s || s.reps == null || s.reps === '')
+  return {
+    exercise_name: e.exercise_name || '', isHiit: false, metric: usesSeconds ? 'seconds' : 'reps',
+    sets: sets.map((st) => ({ weight_kg: st.weight_kg ?? '', reps: st.reps ?? '', seconds: st.seconds ?? '' })),
+    children: []
+  }
+}
 
 // 旧データなどでプリセット外の重量を持つ場合、その値も選択肢に含める
 function weightOptionsFor(cur) {
@@ -370,13 +488,28 @@ function weightOptionsFor(cur) {
   return [...WEIGHT_OPTIONS, n].sort((a, b) => a - b)
 }
 
-// 種目（セット配列）を「ベンチプレス 60kg×10回, 60kg×8回」の形に整形
+// 種目を1行テキストへ整形。
+// 通常: 「ベンチプレス 60kg×10回」「プランク 60秒」、HIIT: 「HIIT: バーピー 20kg 30秒, ももあげ 20秒」
 function rowToLine(r) {
+  if (r.isHiit) {
+    const segs = (r.children || []).map((c) => {
+      if (!String(c.child_name || '').trim()) return ''
+      const p = [String(c.child_name).trim()]
+      if (c.weight_kg !== '' && c.weight_kg != null) p.push(`${c.weight_kg}kg`)
+      if (c.seconds !== '' && c.seconds != null) p.push(`${c.seconds}秒`)
+      return p.join(' ')
+    }).filter(Boolean)
+    return 'HIIT' + (segs.length ? `: ${segs.join(', ')}` : '')
+  }
   const name = String(r.exercise_name).trim()
   const segs = (r.sets || []).map((st) => {
     const p = []
     if (st.weight_kg !== '' && st.weight_kg != null) p.push(`${st.weight_kg}kg`)
-    if (st.reps !== '' && st.reps != null) p.push(`${st.reps}回`)
+    if (r.metric === 'seconds') {
+      if (st.seconds !== '' && st.seconds != null) p.push(`${st.seconds}秒`)
+    } else if (st.reps !== '' && st.reps != null) {
+      p.push(`${st.reps}回`)
+    }
     return p.join('×')
   }).filter(Boolean)
   return name + (segs.length ? ` ${segs.join(', ')}` : '')

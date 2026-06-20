@@ -63,14 +63,21 @@ function GrowthDot(props) {
   return <circle cx={cx} cy={cy} r={4.5} fill={color} stroke="#ffffff" strokeWidth={1.5} />
 }
 
-export default function EvaluationTab({ memberId, member }) {
+export default function EvaluationTab({ memberId, member, initialYm }) {
   const [sheets, setSheets] = useState([])
   const [trainers, setTrainers] = useState([])
   const [presets, setPresets] = useState([])
   const [performance, setPerformance] = useState([]) // [{name, ym, weight, reps}]
   const [handovers, setHandovers] = useState([])     // [{year_month, status, recorded_at}]
   const [gymName, setGymName] = useState('')
-  const [ym, setYm] = useState(currentYearMonth())
+  // 初期月：リマインダ等から対象月が渡されればその月を開く（お渡し記録がアラートと同じ月に保存される）
+  const [ym, setYm] = useState(initialYm || currentYearMonth())
+
+  // 別会員に切り替えたとき等、initialYmが変わったら反映
+  useEffect(() => {
+    if (initialYm) setYm(initialYm)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialYm, memberId])
   // 印刷グラフ・記録に載せる種目（プリセットから最大3）。これが表・グラフ・印刷の唯一の対象。
   const [selected, setSelected] = useState([])
   const [form, setForm] = useState({
@@ -435,7 +442,7 @@ export default function EvaluationTab({ memberId, member }) {
                             p?.payload?.reps != null && metric === 'weight' ? `${v}${unit}（${p.payload.reps}回）` : `${v}${unit}`,
                             name
                           ]} />
-                        <Line type="monotone" dataKey="value" stroke="#2f81f7" strokeWidth={2.5} dot={<GrowthDot />} activeDot={{ r: 6 }} />
+                        <Line type="monotone" dataKey="value" stroke="#2f81f7" strokeWidth={2.5} dot={<GrowthDot />} activeDot={{ r: 6 }} isAnimationActive={false} />
                       </LineChart>
                     </ResponsiveContainer>
                   )}

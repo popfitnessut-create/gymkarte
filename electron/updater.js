@@ -28,12 +28,12 @@ function setupHandlers() {
     const win = BrowserWindow.getAllWindows()[0]
     const { response } = await dialog.showMessageBox(win, {
       type: 'info',
-      buttons: ['ダウンロード', '後で'],
+      buttons: ['今すぐ更新（ダウンロード）', '後で'],
       defaultId: 0,
       cancelId: 1,
-      title: 'アップデート',
-      message: `新しいバージョン ${info.version} が利用できます。`,
-      detail: '今すぐダウンロードしますか？（ダウンロード中もアプリは使えます）'
+      title: 'アップデートのお知らせ',
+      message: `新しいバージョン ${info.version} が配信されています。`,
+      detail: '最新版へのバージョンアップを実行してください。\n「今すぐ更新」を押すとダウンロードを開始します（ダウンロード中もアプリは使えます。更新は再起動時に適用されます）。'
     })
     if (response === 0) {
       send('downloading')

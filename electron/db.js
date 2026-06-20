@@ -390,8 +390,25 @@ function migrate() {
   // セットごとの記録（1行=1セット）に対応する set_no 列。旧データは NULL のまま。
   const se = cols('session_exercises')
   if (!se.includes('set_no')) db.exec('ALTER TABLE session_exercises ADD COLUMN set_no INTEGER')
+  // 秒数記録（プランク等の時間種目・HIIT）に対応。旧データは NULL のまま。
+  if (!se.includes('seconds')) db.exec('ALTER TABLE session_exercises ADD COLUMN seconds INTEGER')
+  // HIIT の子種目名（親 exercise_name='HIIT' の各行に子種目を保持）。通常種目は NULL。
+  if (!se.includes('child_name')) db.exec('ALTER TABLE session_exercises ADD COLUMN child_name TEXT')
 
   migratePresetsV2()
+  migrateHiitPreset()
+}
+
+// HIIT プリセットを追加（既存DBにも一度だけ）。HIITはセッション記録で子種目入力UIを開くトリガになる。
+function migrateHiitPreset() {
+  const done = db.prepare("SELECT value FROM settings WHERE key = 'preset_hiit_done'").get()
+  if (done && done.value === '1') return
+  const tx = db.transaction(() => {
+    const exists = db.prepare('SELECT COUNT(*) c FROM exercise_presets WHERE name = ?').get('HIIT')
+    if (exists.c === 0) db.prepare('INSERT INTO exercise_presets (name, category) VALUES (?, ?)').run('HIIT', '有酸素')
+    db.prepare("INSERT INTO settings (key, value) VALUES ('preset_hiit_done', '1') ON CONFLICT(key) DO UPDATE SET value = '1'").run()
+  })
+  tx()
 }
 
 // 種目プリセットの追加・削除（既存DBにも一度だけ適用）
