@@ -26,11 +26,14 @@ let userDataDir = null
 let syncEnabled = false          // 同期モードで起動しているか
 let syncTimer = null             // 定期プル用インターバル
 let syncDebounce = null          // 書き込み後のまとめ同期用タイマー
+let syncing = false              // db.sync() 実行中フラグ（同期の二重起動を防ぐ）
 let lastSyncAt = null            // 最終同期時刻
 let lastSyncError = null         // 直近の同期エラー
 
 const SYNC_CONFIG_FILE = 'sync-config.json'
-const PULL_INTERVAL_MS = 3000    // 他端末の変更を取り込む間隔
+// db.sync() はネットワーク往復で同期的にメインプロセスをブロックする。
+// 頻度を下げて保存時のカクつきを軽減（反映遅延は最大でこの間隔ぶん）。
+const PULL_INTERVAL_MS = 8000    // 他端末の変更を取り込む間隔
 const PUSH_DEBOUNCE_MS = 400     // 書き込み後に同期するまでの猶予（トランザクションを1回にまとめる）
 
 // 同期設定ファイル（userData/sync-config.json）を読む。{ syncUrl, authToken }
@@ -160,8 +163,12 @@ function scheduleSync() {
 }
 
 // 実際の同期。失敗してもアプリは継続（オフライン耐性）。
+// 二重起動ガード：前回のsyncが実行中なら新たに走らせない
+//（同期的なdb.sync()が積み重なって保存操作をブロックするのを防ぐ）。
 function safeSync() {
   if (!syncEnabled || !db || typeof db.sync !== 'function') return false
+  if (syncing) return false
+  syncing = true
   try {
     db.sync()
     lastSyncAt = new Date().toISOString()
@@ -171,13 +178,20 @@ function safeSync() {
     lastSyncError = e.message
     console.error('[SYNC] db.sync() 失敗:', e.message)
     return false
+  } finally {
+    syncing = false
   }
 }
 
-// 定期プル：他端末の変更を取り込む
+// 定期プル：他端末の変更を取り込む。
+// 書き込み直後のpush（デバウンス待ち）がある間はプルを見送り、
+// db.sync()の無駄打ち・保存処理との衝突を避ける。
 function startPullTimer() {
   if (syncTimer) clearInterval(syncTimer)
-  syncTimer = setInterval(safeSync, PULL_INTERVAL_MS)
+  syncTimer = setInterval(() => {
+    if (syncDebounce || syncing) return
+    safeSync()
+  }, PULL_INTERVAL_MS)
 }
 
 function getDbPath() { return currentDbPath }

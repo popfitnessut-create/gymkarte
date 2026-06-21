@@ -6,7 +6,7 @@ const { getDb, getDbPath, getSyncStatus, writeSyncConfig, syncNow } = require('.
 // レンダラーから呼ばれるDB操作をIPCハンドラとして登録
 function registerIpc() {
   // 会員一覧（ステータスフィルタ任意）。残回数と最終来店日も付与
-  ipcMain.handle('members:list', (_e, { status, sort } = {}) => {
+  ipcMain.handle('members:list', (_e, { status, sort, dir } = {}) => {
     const db = getDb()
     let sql = `
       SELECT m.*,
@@ -19,12 +19,17 @@ function registerIpc() {
       sql += ' WHERE m.status = ?'
       params.push(status)
     }
+    // 昇順/降順（手動並び替えには適用しない）
+    const d = dir === 'desc' ? 'DESC' : 'ASC'
     // 並び替え：会員ID順 / 登録順 / 手動 / フリガナ順（既定）
+    // 会員ID順は数値として整列（"10" が "2" より後ろに来るよう CAST）。
+    // 空の会員IDは常に末尾。CAST は数値で始まらない値を0扱いにするため、
+    // 文字列の member_code もタイブレークに併用する。
     const ORDER = {
-      code: " ORDER BY (m.member_code IS NULL OR m.member_code = ''), m.member_code, m.id",
-      created: ' ORDER BY m.created_at, m.id',
+      code: ` ORDER BY (m.member_code IS NULL OR m.member_code = ''), CAST(m.member_code AS INTEGER) ${d}, m.member_code ${d}, m.id`,
+      created: ` ORDER BY m.created_at ${d}, m.id`,
       manual: ' ORDER BY (m.sort_order IS NULL), m.sort_order, m.furigana, m.name',
-      furigana: ' ORDER BY m.furigana, m.name'
+      furigana: ` ORDER BY m.furigana ${d}, m.name`
     }
     sql += ORDER[sort] || ORDER.furigana
     return db.prepare(sql).all(...params)

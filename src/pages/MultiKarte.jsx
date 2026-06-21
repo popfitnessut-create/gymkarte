@@ -1,17 +1,30 @@
 import { useEffect, useMemo, useState } from 'react'
-import { ArrowLeft, Save, ExternalLink, AlertTriangle, Copy, GripVertical, Check } from 'lucide-react'
+import { ArrowLeft, Save, ExternalLink, AlertTriangle, Copy, GripVertical, Check, Plus, X } from 'lucide-react'
 import { useStore } from '../store/useStore'
 import { ALL_MUSCLES } from '../components/BodyMap'
 import { PurchaseModal } from '../components/TicketsTab'
 import { fmtDate } from '../lib/format'
+import {
+  REP_OPTIONS, SECONDS_OPTIONS, isHiitName, makeNormalRow, makeHiitRow,
+  weightOptionsFor, rowsToExercises
+} from '../lib/exerciseRows'
 
 const today = () => new Date().toISOString().slice(0, 10)
+
+// rows（構造化メニュー）をディープコピー（コピー機能で共有参照にしないため）
+const cloneRows = (rows) => (rows || []).map((r) => ({
+  ...r,
+  sets: (r.sets || []).map((s) => ({ ...s })),
+  children: (r.children || []).map((c) => ({ ...c }))
+}))
 
 // 各カードの入力初期状態
 const blankEntry = () => ({
   // セッション
   muscles: [], consume_ticket: true,
   menuText: '',
+  // 構造化メニュー（重量・回数・秒数・HIIT子種目）。シングル展開と同形式。
+  rows: [],
   // 日次カルテ（自由記述テキスト）
   member_comment: ''
 })
@@ -49,14 +62,15 @@ export default function MultiKarte() {
 
   const toggleSelect = (id) => setSelectedIds((s) => s.includes(id) ? s.filter((x) => x !== id) : [...s, id])
 
-  // 1枚のカードのメニューを指定の会員へコピー
+  // 1枚のカードのメニュー（自由記述＋構造化行）を指定の会員へコピー
   const copyMenuTo = (srcId, targetIds) => {
-    const src = entries[srcId]?.menuText || ''
+    const srcText = entries[srcId]?.menuText || ''
+    const srcRows = entries[srcId]?.rows || []
     setEntries((e) => {
       const next = { ...e }
       targetIds.forEach((id) => {
         if (id === srcId) return
-        next[id] = { ...next[id], menuText: src }
+        next[id] = { ...next[id], menuText: srcText, rows: cloneRows(srcRows) }
       })
       return next
     })
@@ -89,10 +103,13 @@ export default function MultiKarte() {
   }
 
   // 1会員分のセッションpayloadを構築（入力が無ければnull）
+  // 構造化行（重量・回数・秒数・HIIT）＋自由記述メニュー（行ごとに種目名のみ）の両方を保存。
   const buildSession = (m) => {
     const e = entries[m.id]
     const menuLines = (e.menuText || '').split('\n').map((l) => l.trim()).filter(Boolean)
-    const exercises = menuLines.map((line) => ({ exercise_name: line }))
+    const freeExercises = menuLines.map((line) => ({ exercise_name: line }))
+    const structured = rowsToExercises(e.rows)
+    const exercises = [...structured, ...freeExercises]
     const consume = m.plan_type === 'ticket' && e.consume_ticket
     const hasSession = e.muscles.length || exercises.length || consume
     if (!hasSession) return null
@@ -328,7 +345,7 @@ function Card({ member: m, entry: e, presets, saved, selected, selectedCount, on
         {/* メニュー（プリセット選択 + 自由記述） */}
         <div>
           <div className="mb-1 flex items-center justify-between gap-1">
-            <span className="text-gray-400">メニュー</span>
+            <span className="text-gray-400">手動入力欄</span>
             <div className="flex items-center gap-2">
               <select value="" onChange={(ev) => { addPreset(ev.target.value); ev.target.value = '' }} className={`${cinp} w-28`}>
                 <option value="">＋種目</option>
@@ -345,6 +362,9 @@ function Card({ member: m, entry: e, presets, saved, selected, selectedCount, on
             className={`${cinp} font-mono leading-relaxed`} />
         </div>
 
+        {/* 構造化メニュー（重量・回数・秒数・HIIT子種目）— 前月比・記録表に自動反映 */}
+        <MenuRows rows={e.rows} presets={presets} onChange={(rows) => onUpd({ rows })} />
+
         <label className="block">
           <span className="mb-1 block text-gray-400">日次カルテ</span>
           <textarea rows={3} value={e.member_comment} onChange={(ev) => onUpd({ member_comment: ev.target.value })} placeholder="体重・体調・食事などを自由に記録" className={cinp} />
@@ -357,6 +377,135 @@ function Card({ member: m, entry: e, presets, saved, selected, selectedCount, on
           </label>
         )}
       </div>
+    </div>
+  )
+}
+
+// マルチカルテ用のコンパクトな構造化メニュー入力（シングル展開と同形式・同保存）。
+function MenuRows({ rows, presets, onChange }) {
+  const upd = (fn) => onChange(fn(rows || []))
+  const addRow = (name = '') => upd((arr) => [...arr, isHiitName(name) ? makeHiitRow() : makeNormalRow(name)])
+  const removeRow = (i) => upd((arr) => arr.filter((_, idx) => idx !== i))
+  const changeExercise = (i, v) => upd((arr) => arr.map((r, idx) => {
+    if (idx !== i) return r
+    if (isHiitName(v)) return r.isHiit ? r : makeHiitRow()
+    return r.isHiit ? makeNormalRow(v) : { ...r, exercise_name: v }
+  }))
+  const setMetric = (i, metric) => upd((arr) => arr.map((r, idx) => (idx === i ? { ...r, metric } : r)))
+  const setSet = (i, j, k, v) => upd((arr) => arr.map((r, idx) =>
+    idx === i ? { ...r, sets: r.sets.map((st, sj) => (sj === j ? { ...st, [k]: v } : st)) } : r))
+  const addSet = (i) => upd((arr) => arr.map((r, idx) =>
+    idx === i ? { ...r, sets: [...r.sets, { weight_kg: r.sets[r.sets.length - 1]?.weight_kg ?? '', reps: '', seconds: '' }] } : r))
+  const removeSet = (i, j) => upd((arr) => arr.map((r, idx) =>
+    idx === i ? { ...r, sets: r.sets.length > 1 ? r.sets.filter((_, sj) => sj !== j) : r.sets } : r))
+  const setChild = (i, j, k, v) => upd((arr) => arr.map((r, idx) =>
+    idx === i ? { ...r, children: r.children.map((c, cj) => (cj === j ? { ...c, [k]: v } : c)) } : r))
+  const addChild = (i) => upd((arr) => arr.map((r, idx) =>
+    idx === i ? { ...r, children: [...r.children, { child_name: '', weight_kg: '', seconds: '' }] } : r))
+  const removeChild = (i, j) => upd((arr) => arr.map((r, idx) =>
+    idx === i ? { ...r, children: r.children.length > 1 ? r.children.filter((_, cj) => cj !== j) : r.children } : r))
+
+  const list = rows || []
+  return (
+    <div>
+      <div className="mb-1 flex items-center justify-between gap-1">
+        <span className="text-gray-400">重量・回数で記録</span>
+        <select value="" onChange={(ev) => { if (ev.target.value) addRow(ev.target.value); ev.target.value = '' }} className={`${cinp} w-28`}>
+          <option value="">＋種目</option>
+          {presets.map((p) => <option key={p.id} value={p.name}>{p.name}</option>)}
+        </select>
+      </div>
+
+      {list.length > 0 && (
+        <div className="space-y-1.5">
+          {list.map((r, i) => (
+            <div key={i} className="rounded border border-navy-700 bg-navy-900/40 p-1.5">
+              <div className="mb-1 flex items-center gap-1">
+                <select
+                  value={r.isHiit ? 'HIIT' : (presets.some((p) => p.name === r.exercise_name) ? r.exercise_name : (r.exercise_name ? '__custom__' : ''))}
+                  onChange={(ev) => { if (ev.target.value !== '__custom__') changeExercise(i, ev.target.value) }}
+                  className={`${cinp} flex-1`}>
+                  <option value="">種目を選択</option>
+                  {presets.map((p) => <option key={p.id} value={p.name}>{p.name}</option>)}
+                  {!r.isHiit && r.exercise_name && !presets.some((p) => p.name === r.exercise_name) && (
+                    <option value="__custom__">{r.exercise_name}（旧データ）</option>
+                  )}
+                </select>
+                {!r.isHiit && (
+                  <div className="flex shrink-0 overflow-hidden rounded border border-navy-600 text-[10px]">
+                    {[['reps', '回'], ['seconds', '秒']].map(([mk, ml]) => (
+                      <button key={mk} type="button" onClick={() => setMetric(i, mk)}
+                        className={`px-1.5 py-0.5 ${r.metric === mk ? 'bg-accent text-white' : 'text-gray-400 hover:text-gray-200'}`}>
+                        {ml}
+                      </button>
+                    ))}
+                  </div>
+                )}
+                <button onClick={() => removeRow(i)} className="shrink-0 text-gray-400 hover:text-red-400" title="この種目を削除">
+                  <X size={13} />
+                </button>
+              </div>
+
+              {r.isHiit ? (
+                <div>
+                  {r.children.map((c, j) => (
+                    <div key={j} className="mb-1 grid grid-cols-[1fr_64px_64px_20px] items-center gap-1">
+                      <select value={presets.some((p) => p.name === c.child_name) ? c.child_name : (c.child_name ? '__custom__' : '')}
+                        onChange={(ev) => { if (ev.target.value !== '__custom__') setChild(i, j, 'child_name', ev.target.value) }} className={cinp}>
+                        <option value="">子種目</option>
+                        {presets.filter((p) => !isHiitName(p.name)).map((p) => <option key={p.id} value={p.name}>{p.name}</option>)}
+                        {c.child_name && !presets.some((p) => p.name === c.child_name) && <option value="__custom__">{c.child_name}</option>}
+                      </select>
+                      <select value={c.weight_kg === '' || c.weight_kg == null ? '' : String(c.weight_kg)}
+                        onChange={(ev) => setChild(i, j, 'weight_kg', ev.target.value)} className={cinp}>
+                        <option value="">kg</option>
+                        {weightOptionsFor(c.weight_kg).map((w) => <option key={w} value={w}>{w}</option>)}
+                      </select>
+                      <select value={c.seconds === '' || c.seconds == null ? '' : String(c.seconds)}
+                        onChange={(ev) => setChild(i, j, 'seconds', ev.target.value)} className={cinp}>
+                        <option value="">秒</option>
+                        {SECONDS_OPTIONS.map((s) => <option key={s} value={s}>{s}</option>)}
+                      </select>
+                      <button onClick={() => removeChild(i, j)} disabled={r.children.length <= 1}
+                        className="flex justify-center text-gray-400 hover:text-red-400 disabled:opacity-30" title="削除"><X size={12} /></button>
+                    </div>
+                  ))}
+                  <button onClick={() => addChild(i)} className="flex items-center gap-0.5 text-[10px] text-accent hover:underline"><Plus size={11} /> 子種目</button>
+                </div>
+              ) : (
+                <div>
+                  {r.sets.map((st, j) => (
+                    <div key={j} className="mb-1 grid grid-cols-[34px_1fr_1fr_20px] items-center gap-1">
+                      <span className="text-[10px] text-gray-400">{j + 1}set</span>
+                      <select value={st.weight_kg === '' || st.weight_kg == null ? '' : String(st.weight_kg)}
+                        onChange={(ev) => setSet(i, j, 'weight_kg', ev.target.value)} className={cinp}>
+                        <option value="">kg</option>
+                        {weightOptionsFor(st.weight_kg).map((w) => <option key={w} value={w}>{w}</option>)}
+                      </select>
+                      {r.metric === 'seconds' ? (
+                        <select value={st.seconds === '' || st.seconds == null ? '' : String(st.seconds)}
+                          onChange={(ev) => setSet(i, j, 'seconds', ev.target.value)} className={cinp}>
+                          <option value="">秒</option>
+                          {SECONDS_OPTIONS.map((s) => <option key={s} value={s}>{s}</option>)}
+                        </select>
+                      ) : (
+                        <select value={st.reps === '' || st.reps == null ? '' : String(st.reps)}
+                          onChange={(ev) => setSet(i, j, 'reps', ev.target.value)} className={cinp}>
+                          <option value="">回</option>
+                          {REP_OPTIONS.map((n) => <option key={n} value={n}>{n}</option>)}
+                        </select>
+                      )}
+                      <button onClick={() => removeSet(i, j)} disabled={r.sets.length <= 1}
+                        className="flex justify-center text-gray-400 hover:text-red-400 disabled:opacity-30" title="削除"><X size={12} /></button>
+                    </div>
+                  ))}
+                  <button onClick={() => addSet(i)} className="flex items-center gap-0.5 text-[10px] text-accent hover:underline"><Plus size={11} /> セット</button>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   )
 }

@@ -1,6 +1,10 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Plus, Trash2, Save, Dumbbell, ChevronDown, ChevronUp, AlertTriangle, CheckCircle2, X } from 'lucide-react'
 import { usageLabel, MUSCLE_OPTIONS, MONTHLY_LIMITS } from '../lib/plans'
+import {
+  REP_OPTIONS, SECONDS_OPTIONS, isHiitName, makeNormalRow, makeHiitRow,
+  rowFromExercise, weightOptionsFor, rowToLine, validRowsOf, rowsToExercises
+} from '../lib/exerciseRows'
 
 // セッション記録タブ：行カード型。新規は下へ追加。日次カルテ統合。
 export default function SessionsTab({ memberId, member, onRequirePurchase }) {
@@ -192,7 +196,7 @@ function SessionCard({ session, member, trainers, presets, remaining, onSave, on
   const removeRow = (i) => setRows((arr) => arr.filter((_, idx) => idx !== i))
 
   // 種目名が入っている行だけ有効
-  const validRows = useMemo(() => rows.filter((r) => String(r.exercise_name || '').trim()), [rows])
+  const validRows = useMemo(() => validRowsOf(rows), [rows])
   // 折りたたみ表示用に「ベンチプレス 60kg×10回, 60kg×8回」の形へ
   const menuLines = useMemo(() => validRows.map(rowToLine), [validRows])
 
@@ -206,22 +210,7 @@ function SessionCard({ session, member, trainers, presets, remaining, onSave, on
       usage_status: form.usage_status,
       consume_ticket: planType === 'ticket' && form.consume_ticket,
       muscles: muscles.filter(Boolean),
-      exercises: validRows.map((r) => {
-        if (r.isHiit) {
-          return {
-            exercise_name: 'HIIT',
-            sets: (r.children || [])
-              .filter((c) => String(c.child_name || '').trim())
-              .map((c) => ({ child_name: String(c.child_name).trim(), weight_kg: c.weight_kg, seconds: c.seconds }))
-          }
-        }
-        return {
-          exercise_name: String(r.exercise_name).trim(),
-          sets: r.sets.map((st) => (r.metric === 'seconds'
-            ? { weight_kg: st.weight_kg, seconds: st.seconds }
-            : { weight_kg: st.weight_kg, reps: st.reps }))
-        }
-      }),
+      exercises: rowsToExercises(rows),
       daily: { member_comment: dailyText }
     }
     await onSave(payload)
@@ -441,79 +430,6 @@ function SessionCard({ session, member, trainers, presets, remaining, onSave, on
 
 const inp = 'w-full rounded-lg border border-navy-600 bg-navy-900 px-3 py-2 text-sm outline-none focus:border-accent'
 const inpSm = 'w-full rounded-lg border border-navy-600 bg-navy-900 px-2 py-1.5 text-xs outline-none focus:border-accent'
-
-// 重量プリセット: 0kg〜80kg を 0.5kg刻み
-const WEIGHT_OPTIONS = Array.from({ length: 161 }, (_, i) => i * 0.5)
-const REP_OPTIONS = Array.from({ length: 30 }, (_, i) => i + 1)
-// 秒数プリセット: 5秒刻みで60秒まで
-const SECONDS_OPTIONS = Array.from({ length: 12 }, (_, i) => (i + 1) * 5)
-
-// HIIT種目かどうか（大文字小文字を無視）
-function isHiitName(name) { return String(name || '').toUpperCase() === 'HIIT' }
-
-// 行（フォーム状態）のひな型
-function makeNormalRow(name = '') {
-  return { exercise_name: name, isHiit: false, metric: 'reps', sets: [{ weight_kg: '', reps: '', seconds: '' }], children: [] }
-}
-function makeHiitRow() {
-  return { exercise_name: 'HIIT', isHiit: true, metric: 'seconds', sets: [], children: [{ child_name: '', weight_kg: '', seconds: '' }] }
-}
-
-// 保存済みの種目（グループ済みセット配列）をフォーム行へ復元
-function rowFromExercise(e) {
-  const sets = Array.isArray(e.sets) && e.sets.length
-    ? e.sets
-    : [{ weight_kg: e.weight_kg, reps: e.reps, seconds: e.seconds }]
-  const isHiit = isHiitName(e.exercise_name) || sets.some((s) => s && s.child_name)
-  if (isHiit) {
-    return {
-      exercise_name: 'HIIT', isHiit: true, metric: 'seconds', sets: [],
-      children: sets.map((s) => ({ child_name: s.child_name ?? '', weight_kg: s.weight_kg ?? '', seconds: s.seconds ?? '' }))
-    }
-  }
-  // 秒数モード判定：秒数が入っていて回数が無ければ秒数モード
-  const usesSeconds = sets.some((s) => s && s.seconds != null && s.seconds !== '') &&
-    sets.every((s) => !s || s.reps == null || s.reps === '')
-  return {
-    exercise_name: e.exercise_name || '', isHiit: false, metric: usesSeconds ? 'seconds' : 'reps',
-    sets: sets.map((st) => ({ weight_kg: st.weight_kg ?? '', reps: st.reps ?? '', seconds: st.seconds ?? '' })),
-    children: []
-  }
-}
-
-// 旧データなどでプリセット外の重量を持つ場合、その値も選択肢に含める
-function weightOptionsFor(cur) {
-  const n = cur === '' || cur == null ? null : Number(cur)
-  if (n == null || Number.isNaN(n) || WEIGHT_OPTIONS.includes(n)) return WEIGHT_OPTIONS
-  return [...WEIGHT_OPTIONS, n].sort((a, b) => a - b)
-}
-
-// 種目を1行テキストへ整形。
-// 通常: 「ベンチプレス 60kg×10回」「プランク 60秒」、HIIT: 「HIIT: バーピー 20kg 30秒, ももあげ 20秒」
-function rowToLine(r) {
-  if (r.isHiit) {
-    const segs = (r.children || []).map((c) => {
-      if (!String(c.child_name || '').trim()) return ''
-      const p = [String(c.child_name).trim()]
-      if (c.weight_kg !== '' && c.weight_kg != null) p.push(`${c.weight_kg}kg`)
-      if (c.seconds !== '' && c.seconds != null) p.push(`${c.seconds}秒`)
-      return p.join(' ')
-    }).filter(Boolean)
-    return 'HIIT' + (segs.length ? `: ${segs.join(', ')}` : '')
-  }
-  const name = String(r.exercise_name).trim()
-  const segs = (r.sets || []).map((st) => {
-    const p = []
-    if (st.weight_kg !== '' && st.weight_kg != null) p.push(`${st.weight_kg}kg`)
-    if (r.metric === 'seconds') {
-      if (st.seconds !== '' && st.seconds != null) p.push(`${st.seconds}秒`)
-    } else if (st.reps !== '' && st.reps != null) {
-      p.push(`${st.reps}回`)
-    }
-    return p.join('×')
-  }).filter(Boolean)
-  return name + (segs.length ? ` ${segs.join(', ')}` : '')
-}
 
 function L({ label, full, children }) {
   return (

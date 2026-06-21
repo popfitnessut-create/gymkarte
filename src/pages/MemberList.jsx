@@ -24,6 +24,7 @@ export default function MemberList() {
   const [members, setMembers] = useState([])
   const [filter, setFilter] = useState('all')
   const [sort, setSort] = useState('furigana')
+  const [dir, setDir] = useState('asc') // 昇順/降順（手動並び替えには無効）
   const [query, setQuery] = useState('')
   const [showNew, setShowNew] = useState(false)
   const [checked, setChecked] = useState([]) // マルチ展開で選択中のID
@@ -40,9 +41,9 @@ export default function MemberList() {
   })
 
   const load = () =>
-    window.api.members.list({ status: filter, sort }).then(setMembers)
+    window.api.members.list({ status: filter, sort, dir }).then(setMembers)
 
-  useEffect(() => { load() }, [filter, sort])
+  useEffect(() => { load() }, [filter, sort, dir])
 
   // 手動並び替え：対象を上下に1つ移動して順序を保存（手動モード・検索なし時のみ）
   const move = async (index, dir) => {
@@ -135,6 +136,12 @@ export default function MemberList() {
             className="rounded-lg border border-navy-600 bg-navy-800 px-3 py-1.5 text-xs text-gray-200 outline-none focus:border-accent">
             {SORTS.map((s) => <option key={s.key} value={s.key}>{s.label}</option>)}
           </select>
+          <button onClick={() => setDir((d) => (d === 'asc' ? 'desc' : 'asc'))}
+            disabled={sort === 'manual'}
+            title={sort === 'manual' ? '手動並び替えでは無効です' : '昇順／降順を切り替え'}
+            className="flex items-center gap-1 rounded-lg border border-navy-600 bg-navy-800 px-3 py-1.5 text-xs text-gray-200 hover:border-accent disabled:opacity-40">
+            {dir === 'asc' ? <><ChevronUp size={13} /> 昇順</> : <><ChevronDown size={13} /> 降順</>}
+          </button>
         </label>
       </div>
 
