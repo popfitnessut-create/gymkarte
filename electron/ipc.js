@@ -6,7 +6,7 @@ const { getDb, getDbPath, getSyncStatus, writeSyncConfig, syncNow } = require('.
 // レンダラーから呼ばれるDB操作をIPCハンドラとして登録
 function registerIpc() {
   // 会員一覧（ステータスフィルタ任意）。残回数と最終来店日も付与
-  ipcMain.handle('members:list', (_e, { status } = {}) => {
+  ipcMain.handle('members:list', (_e, { status, sort } = {}) => {
     const db = getDb()
     let sql = `
       SELECT m.*,
@@ -19,8 +19,27 @@ function registerIpc() {
       sql += ' WHERE m.status = ?'
       params.push(status)
     }
-    sql += ' ORDER BY m.furigana, m.name'
+    // 並び替え：会員ID順 / 登録順 / 手動 / フリガナ順（既定）
+    const ORDER = {
+      code: " ORDER BY (m.member_code IS NULL OR m.member_code = ''), m.member_code, m.id",
+      created: ' ORDER BY m.created_at, m.id',
+      manual: ' ORDER BY (m.sort_order IS NULL), m.sort_order, m.furigana, m.name',
+      furigana: ' ORDER BY m.furigana, m.name'
+    }
+    sql += ORDER[sort] || ORDER.furigana
     return db.prepare(sql).all(...params)
+  })
+
+  // 手動並び替えの順序を保存（渡されたID配列の並び順を sort_order に書き込む）
+  ipcMain.handle('members:reorder', (_e, ids = []) => {
+    const db = getDb()
+    if (!Array.isArray(ids) || ids.length === 0) return { ok: true }
+    const upd = db.prepare('UPDATE members SET sort_order = ? WHERE id = ?')
+    const tx = db.transaction((list) => {
+      list.forEach((id, i) => upd.run(i, id))
+    })
+    tx(ids)
+    return { ok: true }
   })
 
   // 単一会員取得
@@ -285,7 +304,8 @@ function registerEvaluationIpc() {
     const prev = `${prevD.getFullYear()}-${pad2(prevD.getMonth() + 1)}`
     const phase = day >= lastDay - 2 ? 'print' : 'handover'
     const targetYM = phase === 'print' ? cur : prev
-    const members = db.prepare("SELECT id, name, furigana FROM members WHERE status = 'active' ORDER BY furigana, name").all()
+    // パフォーマンス記録表は月額プラン会員のみが配布対象（回数券会員は対象外）
+    const members = db.prepare("SELECT id, name, furigana FROM members WHERE status = 'active' AND COALESCE(plan_type,'ticket') = 'monthly' ORDER BY furigana, name").all()
     const hand = db.prepare('SELECT 1 AS x FROM evaluation_handovers WHERE member_id = ? AND year_month = ?')
     const pending = members.filter((m) => !hand.get(m.id, targetYM))
     return { targetYM, phase, members: pending }

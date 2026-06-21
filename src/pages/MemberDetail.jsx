@@ -9,12 +9,13 @@ import AnalyticsTab from '../components/AnalyticsTab'
 import DailyListTab from '../components/DailyListTab'
 import EvaluationTab from '../components/EvaluationTab'
 
+// パフォーマンス記録表は月額プラン会員のみ配布対象。回数券会員ではタブを表示しない。
 const tabsFor = (member) => [
   { key: 'basic', label: '基本情報' },
   { key: 'tickets', label: member?.plan_type === 'monthly' ? '月額プラン' : '回数券' },
   { key: 'sessions', label: 'セッション記録' },
   { key: 'daily', label: '日次カルテ一覧' },
-  { key: 'evaluation', label: 'パフォーマンス記録表' },
+  ...(member?.plan_type === 'monthly' ? [{ key: 'evaluation', label: 'パフォーマンス記録表' }] : []),
   { key: 'analytics', label: '分析' }
 ]
 
@@ -32,6 +33,12 @@ export default function MemberDetail() {
   useEffect(() => {
     if (id) window.api.members.get(id).then(setMember)
   }, [id])
+
+  // 現在のタブがプラン変更等で存在しなくなったら基本情報へ戻す（回数券化で記録表タブが消えた場合など）
+  useEffect(() => {
+    if (member && !tabsFor(member).some((t) => t.key === tab)) setTab('basic')
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [member, tab])
 
   // 指定付きで開かれた場合は初期タブ・初期月を適用し、一度きりで消費する
   useEffect(() => {
@@ -95,7 +102,7 @@ export default function MemberDetail() {
       {tab === 'tickets' && <TicketsTab memberId={member.id} onPurchased={handlePurchased} />}
       {tab === 'sessions' && <SessionsTab memberId={member.id} member={member} onRequirePurchase={handleRequirePurchase} />}
       {tab === 'daily' && <DailyListTab memberId={member.id} />}
-      {tab === 'evaluation' && <EvaluationTab memberId={member.id} member={member} initialYm={initialYm} />}
+      {tab === 'evaluation' && member.plan_type === 'monthly' && <EvaluationTab memberId={member.id} member={member} initialYm={initialYm} />}
       {tab === 'analytics' && <AnalyticsTab memberId={member.id} />}
     </div>
   )

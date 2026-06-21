@@ -385,6 +385,8 @@ function migrate() {
   if (!m.includes('counseling_notes')) db.exec('ALTER TABLE members ADD COLUMN counseling_notes TEXT')
   // 手動入力できる会員ID（表示・検索用）。内部の自動採番idはそのまま維持
   if (!m.includes('member_code')) db.exec('ALTER TABLE members ADD COLUMN member_code TEXT')
+  // 会員一覧の手動並び替え順。未設定はNULL（NULLは末尾扱い）。
+  if (!m.includes('sort_order')) db.exec('ALTER TABLE members ADD COLUMN sort_order INTEGER')
   const s = cols('sessions')
   if (!s.includes('usage_status')) db.exec('ALTER TABLE sessions ADD COLUMN usage_status TEXT')
   // セットごとの記録（1行=1セット）に対応する set_no 列。旧データは NULL のまま。

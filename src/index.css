@@ -108,6 +108,9 @@ mark.hl {
   #eval-print {
     display: block !important;
     position: absolute; left: 0; top: 0; width: 100%;
+    /* 左右がわずかに見切れるのを防ぐため、全体を僅かに縮小（中央基準で左右均等に内側へ） */
+    transform: scale(0.95);
+    transform-origin: top center;
   }
   .no-print { display: none !important; }
 }

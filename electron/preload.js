@@ -8,7 +8,8 @@ contextBridge.exposeInMainWorld('api', {
     create: (data) => ipcRenderer.invoke('members:create', data),
     update: (data) => ipcRenderer.invoke('members:update', data),
     remove: (id) => ipcRenderer.invoke('members:delete', id),
-    cards: (ids) => ipcRenderer.invoke('members:cards', ids)
+    cards: (ids) => ipcRenderer.invoke('members:cards', ids),
+    reorder: (ids) => ipcRenderer.invoke('members:reorder', ids)
   },
   trainers: {
     list: () => ipcRenderer.invoke('trainers:list'),

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Search, UserPlus, AlertTriangle, X, Layers, Printer, ClipboardCheck } from 'lucide-react'
+import { Search, UserPlus, AlertTriangle, X, Layers, Printer, ClipboardCheck, ChevronUp, ChevronDown, ArrowDownUp } from 'lucide-react'
 import { useStore } from '../store/useStore'
 import { buildIndex, runSearch, highlightName } from '../lib/search'
 import { STATUS_LABEL, fmtDate, memberCode } from '../lib/format'
@@ -13,9 +13,17 @@ const FILTERS = [
   { key: 'cancelled', label: '解約' }
 ]
 
+const SORTS = [
+  { key: 'furigana', label: 'フリガナ順' },
+  { key: 'code', label: '会員ID順' },
+  { key: 'created', label: '登録順' },
+  { key: 'manual', label: '手動並び替え' }
+]
+
 export default function MemberList() {
   const [members, setMembers] = useState([])
   const [filter, setFilter] = useState('all')
+  const [sort, setSort] = useState('furigana')
   const [query, setQuery] = useState('')
   const [showNew, setShowNew] = useState(false)
   const [checked, setChecked] = useState([]) // マルチ展開で選択中のID
@@ -32,9 +40,20 @@ export default function MemberList() {
   })
 
   const load = () =>
-    window.api.members.list({ status: filter }).then(setMembers)
+    window.api.members.list({ status: filter, sort }).then(setMembers)
 
-  useEffect(() => { load() }, [filter])
+  useEffect(() => { load() }, [filter, sort])
+
+  // 手動並び替え：対象を上下に1つ移動して順序を保存（手動モード・検索なし時のみ）
+  const move = async (index, dir) => {
+    const j = index + dir
+    if (j < 0 || j >= members.length) return
+    const next = members.slice()
+    ;[next[index], next[j]] = [next[j], next[index]]
+    setMembers(next)
+    await window.api.members.reorder(next.map((m) => m.id))
+  }
+  const manualMode = sort === 'manual' && !query.trim()
 
   // パフォーマンス記録表の印刷／お渡しリマインダ（お渡し状況を保存済みの会員はSetに含まれない）
   useEffect(() => {
@@ -98,8 +117,8 @@ export default function MemberList() {
         )}
       </div>
 
-      {/* ステータスフィルター */}
-      <div className="mb-4 flex gap-2">
+      {/* ステータスフィルター ＋ 並び替え */}
+      <div className="mb-4 flex flex-wrap items-center gap-2">
         {FILTERS.map((f) => (
           <button
             key={f.key}
@@ -110,7 +129,21 @@ export default function MemberList() {
             {f.label}
           </button>
         ))}
+        <label className="ml-auto flex items-center gap-2 text-xs text-gray-400">
+          <ArrowDownUp size={14} /> 並び替え
+          <select value={sort} onChange={(e) => setSort(e.target.value)}
+            className="rounded-lg border border-navy-600 bg-navy-800 px-3 py-1.5 text-xs text-gray-200 outline-none focus:border-accent">
+            {SORTS.map((s) => <option key={s.key} value={s.key}>{s.label}</option>)}
+          </select>
+        </label>
       </div>
+
+      {manualMode && (
+        <p className="mb-2 text-[11px] text-gray-400">手動並び替えモード：各行の上下ボタンで順番を入れ替えできます（この順番は保存されます）。</p>
+      )}
+      {sort === 'manual' && query.trim() && (
+        <p className="mb-2 text-[11px] text-amber-600">検索中は手動並び替えできません。検索を解除してください。</p>
+      )}
 
       {/* 会員テーブル */}
       <div className="overflow-hidden rounded-xl border border-navy-700">
@@ -130,7 +163,7 @@ export default function MemberList() {
             {results.length === 0 && (
               <tr><td colSpan={7} className="px-4 py-10 text-center text-gray-500">該当する会員がいません</td></tr>
             )}
-            {results.map(({ member: m, parts }) => {
+            {results.map(({ member: m, parts }, idx) => {
               const low = m.remaining_count <= 3
               const isChecked = checked.includes(m.id)
               return (
@@ -140,7 +173,20 @@ export default function MemberList() {
                   className={`cursor-pointer border-t border-navy-700 hover:bg-navy-800 ${isChecked ? 'bg-navy-800' : ''}`}
                 >
                   <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
-                    <input type="checkbox" checked={isChecked} onChange={() => toggleCheck(m.id)} className="h-4 w-4 accent-accent-gold" />
+                    {manualMode ? (
+                      <div className="flex flex-col items-center gap-0.5">
+                        <button onClick={() => move(idx, -1)} disabled={idx === 0}
+                          title="上へ" className="text-gray-400 hover:text-accent disabled:opacity-30">
+                          <ChevronUp size={15} />
+                        </button>
+                        <button onClick={() => move(idx, 1)} disabled={idx === results.length - 1}
+                          title="下へ" className="text-gray-400 hover:text-accent disabled:opacity-30">
+                          <ChevronDown size={15} />
+                        </button>
+                      </div>
+                    ) : (
+                      <input type="checkbox" checked={isChecked} onChange={() => toggleCheck(m.id)} className="h-4 w-4 accent-accent-gold" />
+                    )}
                   </td>
                   <td className="px-4 py-3 text-gray-400">{memberCode(m)}</td>
                   <td className="px-4 py-3">

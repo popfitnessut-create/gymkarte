@@ -4,7 +4,7 @@ import {
 } from 'recharts'
 import { FileDown, Save, Send, Trash2, TrendingUp, Minus, X, CheckCircle2, AlertCircle } from 'lucide-react'
 import {
-  metricUnit, recordSummary, currentYearMonth, fmtYearMonth, monthOptions, HANDOVER_LABELS
+  metricUnit, recordSummary, currentYearMonth, fmtYearMonth, monthOptions, HANDOVER_LABELS, FEEDBACK_TEMPLATES
 } from '../lib/evaluation'
 import { tooltipStyle } from '../pages/Dashboard'
 import { memberCode } from '../lib/format'
@@ -153,6 +153,15 @@ export default function EvaluationTab({ memberId, member, initialYm }) {
 
   const setRec = (name, field, value) =>
     setForm((f) => ({ ...f, records: { ...f.records, [name]: { ...f.records[name], [field]: value } } }))
+
+  // 定型文テンプレートを「がんばり・良かった点」に挿入（既存入力があれば確認のうえ置換）。挿入後も自由に編集可。
+  const insertTemplate = (idx) => {
+    if (idx === '') return
+    const t = FEEDBACK_TEMPLATES[Number(idx)]
+    if (!t) return
+    if (form.feedback_positive.trim() && !confirm('「がんばり・良かった点」を選択したテンプレートで置き換えますか？\n（置き換え後も自由に編集できます）')) return
+    setForm((f) => ({ ...f, feedback_positive: t.text }))
+  }
 
   // プリセットから種目を追加（最大3）。記録欄の自動反映値も同時に用意。
   const addExercise = (name) => {
@@ -499,10 +508,21 @@ export default function EvaluationTab({ memberId, member, initialYm }) {
             </label>
             <div />
             <label className="col-span-2 block">
-              <span className="mb-1 block text-xs font-medium text-green-600">がんばり・良かった点（必須）<span className="ml-1 text-gray-400">※数字が伸びない月でも必ず前向きに</span></span>
+              <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
+                <span className="text-xs font-medium text-green-600">がんばり・良かった点（必須）<span className="ml-1 text-gray-400">※数字が伸びない月でも必ず前向きに</span></span>
+                <span className="flex items-center gap-1.5 text-xs text-gray-400">
+                  定型文から挿入
+                  <select value="" onChange={(e) => { insertTemplate(e.target.value); e.target.value = '' }}
+                    className="rounded-lg border border-navy-600 bg-navy-900 px-2 py-1 text-xs text-gray-200 outline-none focus:border-accent">
+                    <option value="">テンプレートを選択…</option>
+                    {FEEDBACK_TEMPLATES.map((t, i) => <option key={i} value={i}>{`【${i + 1}】${t.label}`}</option>)}
+                  </select>
+                </span>
+              </div>
               <textarea value={form.feedback_positive} onChange={(e) => setForm((f) => ({ ...f, feedback_positive: e.target.value }))}
-                rows={3} placeholder="例）毎週きちんと通えています！フォームがとても安定してきました。"
+                rows={5} placeholder="例）毎週きちんと通えています！フォームがとても安定してきました。／ 上の「定型文から挿入」も使えます。"
                 className={`${inp} w-full ${positiveEmpty ? 'border-amber-400' : ''}`} />
+              <p className="mt-1 text-[11px] text-gray-400">※ 定型文の【〇回】【種目名】などは会員に合わせて書き換えてください。挿入後も自由に編集できます。</p>
             </label>
             <label className="col-span-2 block">
               <span className="mb-1 block text-xs text-gray-400">来月の目標・アドバイス（任意）</span>
