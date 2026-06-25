@@ -1,6 +1,6 @@
 const { app, BrowserWindow } = require('electron')
 const path = require('path')
-const { initDb } = require('./db')
+const { initDb, flushSync } = require('./db')
 const { registerIpc } = require('./ipc')
 const { initUpdater } = require('./updater')
 
@@ -45,6 +45,12 @@ app.whenReady().then(() => {
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
   })
+})
+
+// 終了直前に、まだクラウドへ送っていない書き込みをまとめて反映する
+//（操作中は同期を裏に回しているため、未送信分が残っていても終了時に確実に送る）。
+app.on('before-quit', () => {
+  try { flushSync() } catch (e) { /* オフライン等は無視して終了 */ }
 })
 
 app.on('window-all-closed', () => {
