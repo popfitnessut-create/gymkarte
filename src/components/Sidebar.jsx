@@ -1,9 +1,12 @@
-import { LayoutDashboard, Users, Dumbbell, Settings } from 'lucide-react'
+import { LayoutDashboard, Users, Dumbbell, Settings, ClipboardList, BarChart3, BookOpen } from 'lucide-react'
 import { useStore } from '../store/useStore'
 
 const NAV = [
   { key: 'dashboard', label: 'ダッシュボード', icon: LayoutDashboard },
-  { key: 'members', label: '会員一覧', icon: Users }
+  { key: 'members', label: '会員一覧', icon: Users },
+  { key: 'procedures', label: '手続き', icon: ClipboardList },
+  { key: 'memberStats', label: '会員統計', icon: BarChart3 },
+  { key: 'help', label: 'ヘルプ・マニュアル', icon: BookOpen }
 ]
 
 export default function Sidebar() {

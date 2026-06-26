@@ -140,6 +140,18 @@ function registerIpc() {
     }).filter(Boolean)
   })
 
+  // 新規会員の「会費ペイ 初回継続課金日変更」アラート対象（未対応の会員）
+  ipcMain.handle('members:billingPending', () =>
+    getDb().prepare(`SELECT id, name, furigana, member_code
+      FROM members WHERE COALESCE(billing_setup_done, 0) = 0 AND status != 'withdrawn'
+      ORDER BY created_at DESC, id DESC`).all())
+
+  // 「変更済み」→ アラートを消す
+  ipcMain.handle('members:setBillingDone', (_e, id) => {
+    getDb().prepare('UPDATE members SET billing_setup_done = 1 WHERE id = ?').run(id)
+    return { ok: true }
+  })
+
   // マスタ（トレーナー・種目プリセット）
   ipcMain.handle('trainers:list', () =>
     getDb().prepare('SELECT * FROM trainers WHERE active = 1 ORDER BY name').all())
@@ -155,6 +167,7 @@ function registerIpc() {
   registerExcelIpc()
   registerSyncIpc()
   registerEvaluationIpc()
+  registerProcedureIpc()
 }
 
 /* ===================== 評価シート ===================== */
@@ -1002,6 +1015,138 @@ function numOrNull(v) {
 }
 
 // undefinedをnullに揃え、欠損フィールドを補完
+/* ===================== 手続き受付・会員統計・記念品 ===================== */
+const PROC_TYPES = ['cancel', 'pause', 'transfer', 'option_cancel']
+// 解約・オプション解約 → コース削除 / 休会・移行 → コース編集
+const PROC_ACTION = { cancel: 'delete', option_cancel: 'delete', pause: 'edit', transfer: 'edit' }
+
+// 受付日から「会費ペイ操作アラート」を表示する期間を求める。
+// 受付が 1〜10日 → 当月14日〜翌月12日 / 受付が 11日以降 → 翌月14日〜翌々月12日
+function procedureWindow(receivedAt) {
+  const d = new Date(`${receivedAt}T00:00:00`)
+  const Y = d.getFullYear(); const M = d.getMonth(); const day = d.getDate()
+  if (day <= 10) {
+    return { start: new Date(Y, M, 14), end: new Date(Y, M + 1, 12) }
+  }
+  return { start: new Date(Y, M + 1, 14), end: new Date(Y, M + 2, 12) }
+}
+
+// 入会日から今日までの満年数（誕生日方式：月日が来て初めて+1年）
+function elapsedYears(joinedAt, today) {
+  const j = new Date(`${joinedAt}T00:00:00`)
+  if (isNaN(j)) return -1
+  let y = today.getFullYear() - j.getFullYear()
+  const md = today.getMonth() - j.getMonth()
+  if (md < 0 || (md === 0 && today.getDate() < j.getDate())) y--
+  return y
+}
+
+function registerProcedureIpc() {
+  // 手続き一覧（新しい受付順）。会員名・実施状況つき。
+  ipcMain.handle('procedures:list', () => {
+    const db = getDb()
+    return db.prepare(`SELECT p.*, m.name, m.furigana, m.member_code
+      FROM procedures p JOIN members m ON m.id = p.member_id
+      ORDER BY p.received_at DESC, p.id DESC`).all()
+  })
+
+  // 受付登録。{ member_id, type, received_at?(既定=今日), note? }
+  ipcMain.handle('procedures:create', (_e, d = {}) => {
+    const db = getDb()
+    if (!d.member_id || !PROC_TYPES.includes(d.type)) return { ok: false, error: 'invalid_args' }
+    const received = (d.received_at && String(d.received_at).slice(0, 10)) || new Date().toISOString().slice(0, 10)
+    const ym = received.slice(0, 7)
+    const info = db.prepare(`INSERT INTO procedures (member_id, type, received_at, year_month, note)
+      VALUES (?, ?, ?, ?, ?)`).run(d.member_id, d.type, received, ym, d.note || null)
+    return { ok: true, id: info.lastInsertRowid }
+  })
+
+  // 実施済み（会費ペイのコース削除/編集を完了）→ アラートが消える
+  ipcMain.handle('procedures:setDone', (_e, id) => {
+    getDb().prepare("UPDATE procedures SET done = 1, done_at = datetime('now','localtime') WHERE id = ?").run(id)
+    return { ok: true }
+  })
+
+  // 受付の取り消し（誤登録用）
+  ipcMain.handle('procedures:remove', (_e, id) => {
+    getDb().prepare('DELETE FROM procedures WHERE id = ?').run(id)
+    return { ok: true }
+  })
+
+  // 表示期間内かつ未実施の手続きアラート。会員名・操作種別(削除/編集)つき。
+  ipcMain.handle('procedures:alerts', () => {
+    const db = getDb()
+    const now = new Date()
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+    const rows = db.prepare(`SELECT p.id, p.member_id, p.type, p.received_at, m.name, m.furigana
+      FROM procedures p JOIN members m ON m.id = p.member_id
+      WHERE p.done = 0 ORDER BY p.received_at`).all()
+    return rows.filter((p) => {
+      const w = procedureWindow(p.received_at)
+      return today >= w.start && today <= w.end
+    }).map((p) => ({ ...p, action: PROC_ACTION[p.type] || 'edit' }))
+  })
+
+  // 会員統計：直近12か月の解約率・休会率・移行率。
+  // 分母＝その月の月初に月額プランで在籍していたとみなせる会員数
+  //  （月額プラン会員のうち、入会日が月初以前で、それ以前の月に解約手続きがない会員）。
+  ipcMain.handle('procedures:stats', () => {
+    const db = getDb()
+    const now = new Date()
+    const denomStmt = db.prepare(`SELECT COUNT(*) c FROM members m
+      WHERE COALESCE(m.plan_type,'ticket') = 'monthly'
+        AND m.joined_at IS NOT NULL AND m.joined_at <= ?
+        AND NOT EXISTS (SELECT 1 FROM procedures p WHERE p.member_id = m.id AND p.type = 'cancel' AND p.year_month < ?)`)
+    const numStmt = db.prepare("SELECT type, COUNT(*) c FROM procedures WHERE year_month = ? GROUP BY type")
+    const months = []
+    for (let i = 11; i >= 0; i--) {
+      const dt = new Date(now.getFullYear(), now.getMonth() - i, 1)
+      const ym = `${dt.getFullYear()}-${pad2(dt.getMonth() + 1)}`
+      const monthStart = `${ym}-01`
+      const denom = denomStmt.get(monthStart, ym).c
+      const counts = { cancel: 0, pause: 0, transfer: 0, option_cancel: 0 }
+      numStmt.all(ym).forEach((r) => { if (counts[r.type] != null) counts[r.type] = r.c })
+      const rate = (n) => (denom > 0 ? Math.round((n / denom) * 1000) / 10 : null)
+      months.push({
+        ym, denom,
+        cancel: counts.cancel, pause: counts.pause, transfer: counts.transfer, optionCancel: counts.option_cancel,
+        cancelRate: rate(counts.cancel), pauseRate: rate(counts.pause), transferRate: rate(counts.transfer)
+      })
+    }
+    return { months }
+  })
+
+  // 在籍記念品アラート（1/2/3年）。会員ごとに「到達済みで未贈呈の最大周年」を1件返す。
+  ipcMain.handle('anniversary:alerts', () => {
+    const db = getDb()
+    const now = new Date()
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+    const members = db.prepare(`SELECT id, name, furigana, joined_at FROM members
+      WHERE status != 'withdrawn' AND joined_at IS NOT NULL AND joined_at != '' ORDER BY furigana, name`).all()
+    const doneStmt = db.prepare('SELECT 1 x FROM anniversary_gifts WHERE member_id = ? AND years = ?')
+    const out = []
+    for (const m of members) {
+      const yrs = elapsedYears(m.joined_at, today)
+      const target = Math.min(yrs, 3) // 到達済みの最大周年（最大3年）
+      if (target < 1) continue
+      if (doneStmt.get(m.id, target)) continue
+      out.push({ member_id: m.id, name: m.name, furigana: m.furigana, years: target })
+    }
+    return out
+  })
+
+  // 「贈呈済み」→ 指定周年以下をまとめて贈呈済みにする（下位周年が再表示されないように）
+  ipcMain.handle('anniversary:setDone', (_e, { member_id, years }) => {
+    const db = getDb()
+    if (!member_id || !years) return { ok: false, error: 'invalid_args' }
+    const ins = db.prepare(`INSERT INTO anniversary_gifts (member_id, years) VALUES (?, ?)
+      ON CONFLICT(member_id, years) DO NOTHING`)
+    const tx = db.transaction(() => { for (let y = 1; y <= years; y++) ins.run(member_id, y) })
+    tx()
+    return { ok: true }
+  })
+}
+
 function normalizeMember(d) {
   const fields = ['name', 'furigana', 'birthdate', 'gender', 'phone', 'email', 'joined_at', 'status', 'goal', 'health_notes', 'notes', 'plan_type', 'plan_name', 'counseling_notes', 'member_code']
   const out = {}

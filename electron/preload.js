@@ -9,7 +9,21 @@ contextBridge.exposeInMainWorld('api', {
     update: (data) => ipcRenderer.invoke('members:update', data),
     remove: (id) => ipcRenderer.invoke('members:delete', id),
     cards: (ids) => ipcRenderer.invoke('members:cards', ids),
-    reorder: (ids) => ipcRenderer.invoke('members:reorder', ids)
+    reorder: (ids) => ipcRenderer.invoke('members:reorder', ids),
+    billingPending: () => ipcRenderer.invoke('members:billingPending'),
+    setBillingDone: (id) => ipcRenderer.invoke('members:setBillingDone', id)
+  },
+  procedures: {
+    list: () => ipcRenderer.invoke('procedures:list'),
+    create: (data) => ipcRenderer.invoke('procedures:create', data),
+    setDone: (id) => ipcRenderer.invoke('procedures:setDone', id),
+    remove: (id) => ipcRenderer.invoke('procedures:remove', id),
+    alerts: () => ipcRenderer.invoke('procedures:alerts'),
+    stats: () => ipcRenderer.invoke('procedures:stats')
+  },
+  anniversary: {
+    alerts: () => ipcRenderer.invoke('anniversary:alerts'),
+    setDone: (data) => ipcRenderer.invoke('anniversary:setDone', data)
   },
   trainers: {
     list: () => ipcRenderer.invoke('trainers:list'),

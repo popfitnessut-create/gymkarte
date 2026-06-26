@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Users, UserCheck, CalendarCheck, AlertTriangle, TicketCheck, Printer, ClipboardCheck } from 'lucide-react'
+import { Users, UserCheck, CalendarCheck, AlertTriangle, TicketCheck, Printer, ClipboardCheck, CreditCard, ClipboardList, Gift, Check } from 'lucide-react'
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts'
 import { useStore } from '../store/useStore'
 import { fmtYearMonth } from '../lib/evaluation'
@@ -7,21 +7,48 @@ import { fmtYearMonth } from '../lib/evaluation'
 export default function Dashboard() {
   const [data, setData] = useState(null)
   const [reminder, setReminder] = useState(null)
+  const [billing, setBilling] = useState([])
+  const [procAlerts, setProcAlerts] = useState([])
+  const [annivAlerts, setAnnivAlerts] = useState([])
   const openMember = useStore((s) => s.openMember)
   const openMemberAt = useStore((s) => s.openMemberAt)
+
+  const loadBilling = () => window.api.members.billingPending().then(setBilling)
+  const loadProc = () => window.api.procedures.alerts().then(setProcAlerts)
+  const loadAnniv = () => window.api.anniversary.alerts().then(setAnnivAlerts)
 
   useEffect(() => {
     window.api.stats.dashboard().then(setData)
     window.api.evaluations.reminders().then(setReminder)
+    loadBilling(); loadProc(); loadAnniv()
   }, [])
 
   if (!data) return <div className="p-8 text-gray-400">読み込み中…</div>
 
   const todayCount = data.todayVisits.length
 
+  const dismissBilling = async (id) => { await window.api.members.setBillingDone(id); loadBilling() }
+  const dismissProc = async (id) => { await window.api.procedures.setDone(id); loadProc() }
+  const dismissAnniv = async (a) => { await window.api.anniversary.setDone({ member_id: a.member_id, years: a.years }); loadAnniv() }
+
   return (
     <div className="p-8">
       <h1 className="mb-6 text-2xl font-bold">ダッシュボード</h1>
+
+      {/* 新規会員：会費ペイ 初回継続課金日変更アラート */}
+      {billing.length > 0 && (
+        <BillingAlert members={billing} onDone={dismissBilling} openMember={openMember} />
+      )}
+
+      {/* 手続き：会費ペイ コース削除／編集アラート */}
+      {procAlerts.length > 0 && (
+        <ProcedureAlert items={procAlerts} onDone={dismissProc} openMember={openMember} />
+      )}
+
+      {/* 在籍記念品アラート */}
+      {annivAlerts.length > 0 && (
+        <AnniversaryAlert items={annivAlerts} onDone={dismissAnniv} openMember={openMember} />
+      )}
 
       {/* パフォーマンス記録表 印刷／お渡しリマインダ */}
       {reminder && reminder.members.length > 0 && (
@@ -93,6 +120,81 @@ export default function Dashboard() {
             ))}
           </div>
         )}
+      </div>
+    </div>
+  )
+}
+
+// 新規会員の「会費ペイ 初回継続課金日変更」アラート
+function BillingAlert({ members, onDone, openMember }) {
+  return (
+    <div className="mb-6 rounded-xl border border-accent/50 bg-accent/10 p-5">
+      <div className="mb-1 flex items-center gap-2 text-sm font-semibold text-gray-100">
+        <CreditCard size={16} className="text-accent" /> 会費ペイ 初回継続課金日の変更（新規会員 {members.length}名）
+      </div>
+      <p className="mb-3 text-xs text-gray-400">会費ペイで初回継続課金日を変更したら「変更済み」を押してください。</p>
+      <div className="space-y-2">
+        {members.map((m) => (
+          <div key={m.id} className="flex items-center justify-between rounded-lg border border-navy-600 bg-navy-900 px-3 py-2">
+            <button onClick={() => openMember(m.id)} className="text-left text-sm hover:text-accent">
+              会費ペイにて<span className="font-medium">{m.name}</span>様の初回継続課金日の変更を行なってください
+            </button>
+            <button onClick={() => onDone(m.id)}
+              className="flex shrink-0 items-center gap-1 rounded-md border border-accent/40 px-2.5 py-1 text-[11px] text-accent hover:bg-accent/10">
+              <Check size={12} /> 変更済み
+            </button>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+// 手続き受付の「会費ペイ コース削除／編集」アラート
+function ProcedureAlert({ items, onDone, openMember }) {
+  return (
+    <div className="mb-6 rounded-xl border border-red-500/40 bg-red-500/5 p-5">
+      <div className="mb-1 flex items-center gap-2 text-sm font-semibold text-gray-100">
+        <ClipboardList size={16} className="text-red-400" /> 会費ペイ 手続き対応（{items.length}件）
+      </div>
+      <p className="mb-3 text-xs text-gray-400">会費ペイで対象会員のコース削除／編集を行ったら「実施済み」を押してください。</p>
+      <div className="space-y-2">
+        {items.map((p) => (
+          <div key={p.id} className="flex items-center justify-between rounded-lg border border-navy-600 bg-navy-900 px-3 py-2">
+            <button onClick={() => openMember(p.member_id)} className="text-left text-sm hover:text-accent">
+              会費ペイにて<span className="font-medium">{p.name}</span>様のコース{p.action === 'delete' ? '削除' : '編集'}を実施してください。
+            </button>
+            <button onClick={() => onDone(p.id)}
+              className="flex shrink-0 items-center gap-1 rounded-md border border-red-500/40 px-2.5 py-1 text-[11px] text-red-400 hover:bg-red-500/10">
+              <Check size={12} /> 実施済み
+            </button>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+// 在籍記念品アラート（1/2/3年）
+function AnniversaryAlert({ items, onDone, openMember }) {
+  return (
+    <div className="mb-6 rounded-xl border border-accent-gold/50 bg-accent-gold/10 p-5">
+      <div className="mb-1 flex items-center gap-2 text-sm font-semibold text-gray-100">
+        <Gift size={16} className="text-accent-gold" /> 在籍記念品の贈呈対象（{items.length}名）
+      </div>
+      <p className="mb-3 text-xs text-gray-400">記念品をお渡ししたら「贈呈済み」を押してください。</p>
+      <div className="space-y-2">
+        {items.map((a) => (
+          <div key={`${a.member_id}-${a.years}`} className="flex items-center justify-between rounded-lg border border-navy-600 bg-navy-900 px-3 py-2">
+            <button onClick={() => openMember(a.member_id)} className="text-left text-sm hover:text-accent">
+              <span className="font-medium">{a.name}</span>様の在籍{a.years}年が経過しました。記念品贈呈対象です。
+            </button>
+            <button onClick={() => onDone(a)}
+              className="flex shrink-0 items-center gap-1 rounded-md border border-accent-gold/40 px-2.5 py-1 text-[11px] text-accent-gold hover:bg-accent-gold/10">
+              <Check size={12} /> 贈呈済み
+            </button>
+          </div>
+        ))}
       </div>
     </div>
   )

@@ -5,6 +5,9 @@ import MemberList from './pages/MemberList'
 import MemberDetail from './pages/MemberDetail'
 import MultiKarte from './pages/MultiKarte'
 import Settings from './pages/Settings'
+import Procedures from './pages/Procedures'
+import MemberStats from './pages/MemberStats'
+import Help from './pages/Help'
 
 export default function App() {
   const page = useStore((s) => s.page)
@@ -21,6 +24,9 @@ export default function App() {
             {page === 'dashboard' && <Dashboard />}
             {page === 'members' && <MemberList />}
             {page === 'memberDetail' && <MemberDetail />}
+            {page === 'procedures' && <Procedures />}
+            {page === 'memberStats' && <MemberStats />}
+            {page === 'help' && <Help />}
             {page === 'settings' && <Settings />}
           </div>
         )}

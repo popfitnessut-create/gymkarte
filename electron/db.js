@@ -399,6 +399,38 @@ function createSchema() {
     CREATE INDEX IF NOT EXISTS idx_evalsheets_member ON evaluation_sheets(member_id);
     CREATE INDEX IF NOT EXISTS idx_evalrecords_sheet ON evaluation_records(sheet_id);
     CREATE INDEX IF NOT EXISTS idx_evalhandover_member ON evaluation_handovers(member_id);
+
+    -- 手続き受付（会費ペイでの操作待ち）。
+    -- type: 'cancel'（解約）/ 'pause'（休会）/ 'transfer'（移行）/ 'option_cancel'（オプション解約）
+    -- received_at: 受付日(YYYY-MM-DD)、year_month: 受付月(YYYY-MM・統計用)
+    -- done: 会費ペイでのコース削除/編集を実施済みなら1（アラートが消える）
+    CREATE TABLE IF NOT EXISTS procedures (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      member_id INTEGER NOT NULL,
+      type TEXT NOT NULL,
+      received_at TEXT NOT NULL,
+      year_month TEXT NOT NULL,
+      note TEXT,
+      done INTEGER NOT NULL DEFAULT 0,
+      done_at TEXT,
+      created_at TEXT DEFAULT (datetime('now','localtime')),
+      FOREIGN KEY (member_id) REFERENCES members(id) ON DELETE CASCADE
+    );
+
+    -- 在籍記念品の贈呈済み記録（会員×周年で一意）。
+    -- years: 1 | 2 | 3。入会日からの満年数がこの周年に達し、未贈呈ならアラート表示。
+    CREATE TABLE IF NOT EXISTS anniversary_gifts (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      member_id INTEGER NOT NULL,
+      years INTEGER NOT NULL,
+      done_at TEXT DEFAULT (datetime('now','localtime')),
+      UNIQUE (member_id, years),
+      FOREIGN KEY (member_id) REFERENCES members(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_procedures_member ON procedures(member_id);
+    CREATE INDEX IF NOT EXISTS idx_procedures_ym ON procedures(year_month);
+    CREATE INDEX IF NOT EXISTS idx_anniv_member ON anniversary_gifts(member_id);
   `)
 
   migrate()
@@ -416,6 +448,12 @@ function migrate() {
   if (!m.includes('member_code')) db.exec('ALTER TABLE members ADD COLUMN member_code TEXT')
   // 会員一覧の手動並び替え順。未設定はNULL（NULLは末尾扱い）。
   if (!m.includes('sort_order')) db.exec('ALTER TABLE members ADD COLUMN sort_order INTEGER')
+  // 新規会員の「会費ペイ 初回継続課金日変更」アラート用フラグ。0=未対応(アラート表示)/1=対応済み。
+  // 既存会員は機能追加以前から在籍しており課金設定済みとみなすため、一度だけ全員を1にする。
+  if (!m.includes('billing_setup_done')) {
+    db.exec('ALTER TABLE members ADD COLUMN billing_setup_done INTEGER DEFAULT 0')
+    db.exec('UPDATE members SET billing_setup_done = 1')
+  }
   const s = cols('sessions')
   if (!s.includes('usage_status')) db.exec('ALTER TABLE sessions ADD COLUMN usage_status TEXT')
   // セットごとの記録（1行=1セット）に対応する set_no 列。旧データは NULL のまま。
