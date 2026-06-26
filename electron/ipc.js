@@ -1,7 +1,7 @@
 const { ipcMain, dialog, app, BrowserWindow } = require('electron')
 const fs = require('fs')
 const path = require('path')
-const { getDb, getDbPath, getSyncStatus, writeSyncConfig, syncNow } = require('./db')
+const { getDb, getDbPath, getSyncStatus, writeSyncConfig, syncNow, flushSync } = require('./db')
 
 // レンダラーから呼ばれるDB操作をIPCハンドラとして登録
 function registerIpc() {
@@ -60,6 +60,10 @@ function registerIpc() {
       (name, furigana, birthdate, gender, phone, email, joined_at, status, goal, health_notes, notes, plan_type, plan_name, counseling_notes, member_code)
       VALUES (@name, @furigana, @birthdate, @gender, @phone, @email, @joined_at, @status, @goal, @health_notes, @notes, @plan_type, @plan_name, @counseling_notes, @member_code)`)
     const info = stmt.run(normalizeMember(data))
+    // クラウド同期モードでは登録直後にプッシュ/プルを確定させ、
+    // 一覧再読込時に新規会員が確実にローカルレプリカへ反映されるようにする。
+    // （同期無効時は no-op で即 false を返すため遅延は発生しない）
+    flushSync()
     return db.prepare('SELECT * FROM members WHERE id = ?').get(info.lastInsertRowid)
   })
 

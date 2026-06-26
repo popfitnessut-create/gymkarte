@@ -23,7 +23,7 @@ const SORTS = [
 export default function MemberList() {
   const [members, setMembers] = useState([])
   const [filter, setFilter] = useState('all')
-  const [sort, setSort] = useState('furigana')
+  const [sort, setSort] = useState('code')
   const [dir, setDir] = useState('asc') // 昇順/降順（手動並び替えには無効）
   const [query, setQuery] = useState('')
   const [showNew, setShowNew] = useState(false)
