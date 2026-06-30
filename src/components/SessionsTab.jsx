@@ -3,7 +3,8 @@ import { Plus, Trash2, Save, Dumbbell, ChevronDown, ChevronUp, AlertTriangle, Ch
 import { usageLabel, MUSCLE_OPTIONS, MONTHLY_LIMITS } from '../lib/plans'
 import {
   REP_OPTIONS, SECONDS_OPTIONS, isHiitName, makeNormalRow, makeHiitRow,
-  rowFromExercise, weightOptionsFor, rowToLine, validRowsOf, rowsToExercises
+  rowFromExercise, weightOptionsFor, rowToLine, validRowsOf, rowsToExercises,
+  parseManualMenu, MANUAL_INPUT_HELP
 } from '../lib/exerciseRows'
 
 // セッション記録タブ：行カード型。新規は下へ追加。日次カルテ統合。
@@ -165,6 +166,18 @@ function SessionCard({ session, member, trainers, presets, remaining, onSave, on
   const [rows, setRows] = useState(() => (session?.exercises || []).map(rowFromExercise))
   // 日次カルテは自由記述テキストのみ（member_commentに保存）
   const [dailyText, setDailyText] = useState(() => session?.daily?.member_comment ?? '')
+  // 手動入力（規則的な書式）→ メニュー行へ反映
+  const [manualOpen, setManualOpen] = useState(false)
+  const [manualText, setManualText] = useState('')
+  const [manualInvalid, setManualInvalid] = useState([])
+
+  // 手動入力テキストを解析してメニュー行に追加。書式違反の行は反映せず警告表示。
+  const applyManual = () => {
+    const { exercises, invalid } = parseManualMenu(manualText)
+    if (exercises.length) setRows((arr) => [...arr, ...exercises.map(rowFromExercise)])
+    setManualInvalid(invalid)
+    if (exercises.length) setManualText(invalid.map((v) => v.text).join('\n'))
+  }
 
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }))
   const setMuscle = (i, v) => setMuscles((arr) => arr.map((x, idx) => (idx === i ? v : x)))
@@ -286,7 +299,34 @@ function SessionCard({ session, member, trainers, presets, remaining, onSave, on
                 <option value="">＋ プリセット種目から追加</option>
                 {presets.map((p) => <option key={p.id} value={p.name}>{p.name}</option>)}
               </select>
+              <button type="button" onClick={() => setManualOpen((o) => !o)}
+                className="shrink-0 rounded-lg border border-navy-600 px-3 py-2 text-xs text-gray-300 hover:border-accent hover:text-accent">
+                手動入力
+              </button>
             </div>
+
+            {manualOpen && (
+              <div className="mb-3 rounded-lg border border-navy-600 bg-navy-900 p-3">
+                <p className="mb-1 text-[11px] text-gray-400">{MANUAL_INPUT_HELP}</p>
+                <textarea rows={3} value={manualText} onChange={(e) => setManualText(e.target.value)}
+                  placeholder={'ベンチプレス 60kg 10\nラットプルダウン 40kg 12\nプランク 30s'}
+                  className={`${inp} font-mono leading-relaxed`} />
+                {manualInvalid.length > 0 && (
+                  <div className="mt-2 rounded-md border border-red-500/40 bg-red-500/10 px-3 py-2 text-[11px] text-red-400">
+                    <span className="flex items-center gap-1"><AlertTriangle size={12} /> 書式違反のため反映できない行があります（記録表に反映されません）：</span>
+                    <ul className="mt-1 list-disc pl-5">
+                      {manualInvalid.map((v) => <li key={v.line}>{v.text}</li>)}
+                    </ul>
+                  </div>
+                )}
+                <div className="mt-2 flex justify-end">
+                  <button type="button" onClick={applyManual}
+                    className="rounded-lg bg-accent px-4 py-1.5 text-xs font-medium text-white hover:opacity-90">
+                    メニューに反映
+                  </button>
+                </div>
+              </div>
+            )}
 
             <div className="space-y-3">
               {rows.map((r, i) => (

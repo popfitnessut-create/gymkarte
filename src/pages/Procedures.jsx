@@ -12,14 +12,38 @@ const TYPE_MAP = Object.fromEntries(TYPES.map((t) => [t.key, t]))
 
 const inp = 'w-full rounded-lg border border-navy-600 bg-navy-900 px-3 py-2 text-sm outline-none focus:border-accent'
 
+const pad2 = (n) => String(n).padStart(2, '0')
+// 休会開始日（自動）：受付が10日まで→翌月1日 / 11日以降→翌々月1日
+function pauseStartFrom(receivedISO) {
+  const d = new Date(`${receivedISO}T00:00:00`)
+  const add = d.getDate() <= 10 ? 1 : 2
+  const base = new Date(d.getFullYear(), d.getMonth() + add, 1)
+  return `${base.getFullYear()}-${pad2(base.getMonth() + 1)}-01`
+}
+// 休会終了日：選択した「◯月末」を、開始日以降で最も近い年に解決
+function pauseEndFrom(startISO, month) {
+  if (!month) return ''
+  const s = new Date(`${startISO}T00:00:00`)
+  let y = s.getFullYear()
+  if (Number(month) < s.getMonth() + 1) y += 1
+  const last = new Date(y, Number(month), 0).getDate()
+  return `${y}-${pad2(month)}-${pad2(last)}`
+}
+const fmtJp = (iso) => (iso ? `${iso.slice(0, 4)}年${Number(iso.slice(5, 7))}月${Number(iso.slice(8, 10))}日` : '—')
+
 export default function Procedures() {
   const [members, setMembers] = useState([])
   const [list, setList] = useState([])
   const [type, setType] = useState('cancel')
   const [memberId, setMemberId] = useState(null)
   const [received, setReceived] = useState(new Date().toISOString().slice(0, 10))
+  const [pauseEndMonth, setPauseEndMonth] = useState('')
   const [q, setQ] = useState('')
   const [saving, setSaving] = useState(false)
+
+  // 休会の自動開始日・終了日
+  const pauseStart = useMemo(() => pauseStartFrom(received), [received])
+  const pauseEnd = useMemo(() => pauseEndFrom(pauseStart, pauseEndMonth), [pauseStart, pauseEndMonth])
 
   const reload = () => window.api.procedures.list().then(setList)
   useEffect(() => {
@@ -38,11 +62,14 @@ export default function Procedures() {
 
   const submit = async () => {
     if (!memberId) { alert('会員を選択してください'); return }
+    if (type === 'pause' && !pauseEndMonth) { alert('休会終了日（◯月末）を選択してください'); return }
     setSaving(true)
-    const res = await window.api.procedures.create({ member_id: memberId, type, received_at: received })
+    const payload = { member_id: memberId, type, received_at: received }
+    if (type === 'pause') { payload.pause_start = pauseStart; payload.pause_end = pauseEnd }
+    const res = await window.api.procedures.create(payload)
     setSaving(false)
     if (!res || !res.ok) { alert('登録に失敗しました'); return }
-    setMemberId(null); setQ('')
+    setMemberId(null); setQ(''); setPauseEndMonth('')
     reload()
   }
 
@@ -110,6 +137,23 @@ export default function Procedures() {
             <input type="date" value={received} onChange={(e) => setReceived(e.target.value)} className={inp} />
           </div>
 
+          {type === 'pause' && (
+            <div className="mb-5 rounded-lg border border-navy-600 bg-navy-900 p-3">
+              <span className="mb-1 block text-xs text-gray-400">休会終了日</span>
+              <select value={pauseEndMonth} onChange={(e) => setPauseEndMonth(e.target.value)} className={inp}>
+                <option value="">選択してください</option>
+                {Array.from({ length: 12 }, (_, i) => i + 1).map((mo) => (
+                  <option key={mo} value={mo}>{mo}月末</option>
+                ))}
+              </select>
+              <p className="mt-2 text-[11px] leading-relaxed text-gray-500">
+                休会開始日（自動）：<span className="text-gray-300">{fmtJp(pauseStart)}</span>
+                <span className="text-gray-600">（受付10日まで→翌月1日／11日以降→翌々月1日）</span>
+                {pauseEndMonth && <><br />休会終了日：<span className="text-gray-300">{fmtJp(pauseEnd)}</span></>}
+              </p>
+            </div>
+          )}
+
           <button onClick={submit} disabled={saving || !memberId}
             className="w-full rounded-lg bg-accent px-5 py-2.5 text-sm font-medium text-white hover:opacity-90 disabled:opacity-50">
             {saving ? '登録中…' : 'この手続きを受け付ける'}
@@ -135,6 +179,9 @@ export default function Procedures() {
                         <span className="ml-2 text-[11px] text-gray-400">{(TYPE_MAP[p.type] || {}).label || p.type}</span>
                       </div>
                       <div className="mt-0.5 text-[11px] text-gray-500">受付 {p.received_at}</div>
+                      {p.type === 'pause' && (p.pause_start || p.pause_end) && (
+                        <div className="mt-0.5 text-[11px] text-gray-500">休会 {fmtJp(p.pause_start)} 〜 {fmtJp(p.pause_end)}</div>
+                      )}
                     </div>
                     {p.done ? (
                       <span className="flex shrink-0 items-center gap-1 rounded-md bg-green-500/10 px-2 py-1 text-[11px] font-medium text-green-400">

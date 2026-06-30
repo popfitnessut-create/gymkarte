@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Save, Plus, Trash2, Download, Upload, FileSpreadsheet, Dumbbell, RefreshCw, Cloud, CheckCircle2, AlertTriangle } from 'lucide-react'
+import { Save, Plus, Trash2, Download, Upload, FileSpreadsheet, Dumbbell, RefreshCw, Cloud, CheckCircle2, AlertTriangle, ArrowUp, ArrowDown } from 'lucide-react'
 import ExcelImport from '../components/ExcelImport'
 
 export default function Settings() {
@@ -190,6 +190,7 @@ function TrainerSection() {
 function PresetSection() {
   const [list, setList] = useState([])
   const [form, setForm] = useState({ name: '', category: '' })
+  const [busy, setBusy] = useState(false)
   const load = () => window.api.presets.list().then(setList)
   useEffect(() => { load() }, [])
 
@@ -197,13 +198,53 @@ function PresetSection() {
   const upd = async (p, k, v) => { await window.api.presets.update({ ...p, [k]: v }); load() }
   const remove = async (id) => { if (confirm('この種目を削除しますか？')) { await window.api.presets.remove(id); load() } }
 
+  // 並び順を保存（id配列の順に sort_order を振り直す）
+  const persistOrder = async (ordered) => {
+    setList(ordered) // 楽観的に即反映
+    setBusy(true)
+    await window.api.presets.reorder(ordered.map((p) => p.id))
+    setBusy(false)
+    load()
+  }
+  // 手動入れ替え（1つ上／下へ）
+  const move = (i, dir) => {
+    const j = i + dir
+    if (j < 0 || j >= list.length) return
+    const next = list.slice()
+    ;[next[i], next[j]] = [next[j], next[i]]
+    persistOrder(next)
+  }
+  // 部位別（カテゴリ→名前）に並べ替え
+  const sortByCategory = () => {
+    const next = list.slice().sort((a, b) =>
+      String(a.category || '').localeCompare(String(b.category || ''), 'ja') ||
+      String(a.name || '').localeCompare(String(b.name || ''), 'ja'))
+    persistOrder(next)
+  }
+  // 五十音（名前のかな順）に並べ替え
+  const sortByKana = () => {
+    const next = list.slice().sort((a, b) =>
+      String(a.name || '').localeCompare(String(b.name || ''), 'ja'))
+    persistOrder(next)
+  }
+
   return (
     <Section title="種目プリセット" icon={Dumbbell}>
+      <div className="mb-3 flex flex-wrap items-center gap-2">
+        <span className="text-xs text-gray-400">並び替え：</span>
+        <button onClick={sortByCategory} disabled={busy} className="rounded-lg border border-navy-600 px-3 py-1.5 text-xs text-gray-300 hover:border-accent hover:text-accent disabled:opacity-50">部位別</button>
+        <button onClick={sortByKana} disabled={busy} className="rounded-lg border border-navy-600 px-3 py-1.5 text-xs text-gray-300 hover:border-accent hover:text-accent disabled:opacity-50">五十音順</button>
+        <span className="text-[11px] text-gray-500">／ ↑↓で手動入れ替え（この並び順がメニュー選択にも反映されます）</span>
+      </div>
       <div className="space-y-2">
-        {list.map((p) => (
+        {list.map((p, i) => (
           <div key={p.id} className="flex items-center gap-2">
-            <input defaultValue={p.name} onBlur={(e) => e.target.value !== p.name && upd(p, 'name', e.target.value)} className={`${inp} flex-1`} />
-            <input defaultValue={p.category || ''} onBlur={(e) => (e.target.value !== (p.category || '')) && upd(p, 'category', e.target.value)} placeholder="部位カテゴリ" className={`${inp} w-32`} />
+            <div className="flex flex-col">
+              <button onClick={() => move(i, -1)} disabled={i === 0 || busy} className="text-gray-500 hover:text-accent disabled:opacity-25" title="上へ"><ArrowUp size={13} /></button>
+              <button onClick={() => move(i, 1)} disabled={i === list.length - 1 || busy} className="text-gray-500 hover:text-accent disabled:opacity-25" title="下へ"><ArrowDown size={13} /></button>
+            </div>
+            <input defaultValue={p.name} key={`n${p.id}-${p.sort_order}`} onBlur={(e) => e.target.value !== p.name && upd(p, 'name', e.target.value)} className={`${inp} flex-1`} />
+            <input defaultValue={p.category || ''} key={`c${p.id}-${p.sort_order}`} onBlur={(e) => (e.target.value !== (p.category || '')) && upd(p, 'category', e.target.value)} placeholder="部位カテゴリ" className={`${inp} w-32`} />
             <button onClick={() => remove(p.id)} className="px-1 text-gray-500 hover:text-red-400"><Trash2 size={15} /></button>
           </div>
         ))}

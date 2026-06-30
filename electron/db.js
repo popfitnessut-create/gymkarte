@@ -454,6 +454,21 @@ function migrate() {
     db.exec('ALTER TABLE members ADD COLUMN billing_setup_done INTEGER DEFAULT 0')
     db.exec('UPDATE members SET billing_setup_done = 1')
   }
+  // 単発利用（¥4,980・1回券）の識別。0=通常の回数券 / 1=単発利用。
+  const tk = cols('tickets')
+  if (!tk.includes('single_use')) db.exec('ALTER TABLE tickets ADD COLUMN single_use INTEGER DEFAULT 0')
+  // 単発利用の退会処理（コース削除）実施日時。実施済みなら退会アラートを止める。
+  if (!m.includes('single_use_removed_at')) db.exec('ALTER TABLE members ADD COLUMN single_use_removed_at TEXT')
+  // 種目プリセットの表示順（手動入れ替え・部位別・五十音の並びを保存）。未設定はNULL（末尾扱い）。
+  const ep = cols('exercise_presets')
+  if (!ep.includes('sort_order')) {
+    db.exec('ALTER TABLE exercise_presets ADD COLUMN sort_order INTEGER')
+    db.exec('UPDATE exercise_presets SET sort_order = id * 10')
+  }
+  // 月額プラン休会手続きの休会開始日・終了日（YYYY-MM-DD）。
+  const pr = cols('procedures')
+  if (!pr.includes('pause_start')) db.exec('ALTER TABLE procedures ADD COLUMN pause_start TEXT')
+  if (!pr.includes('pause_end')) db.exec('ALTER TABLE procedures ADD COLUMN pause_end TEXT')
   const s = cols('sessions')
   if (!s.includes('usage_status')) db.exec('ALTER TABLE sessions ADD COLUMN usage_status TEXT')
   // セットごとの記録（1行=1セット）に対応する set_no 列。旧データは NULL のまま。

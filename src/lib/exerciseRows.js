@@ -76,6 +76,61 @@ export function rowsToExercises(rows) {
   })
 }
 
+// ===== 手動入力フォーマット（パフォーマンス記録表に反映できる規則的な書式）=====
+// 1行 = 1種目。トークンは半角スペース1つで区切る。
+//   形式: 「種目名 [重量kg] 回数」 または 「種目名 [重量kg] 秒数s」
+//   ・重量は末尾に半角 kg（例: 60kg / 12.5kg）。省略可。
+//   ・秒数は末尾に半角 s（例: 30s）。回数は数字のみ（例: 10）。
+//   ・重量・回数・秒数はすべて半角英数字。全角スペースや全角数字は不可。
+// 例:
+//   ベンチプレス 60kg 10   → 重量60kg・10回
+//   ラットプルダウン 8     → 8回（重量なし）
+//   プランク 60s           → 60秒
+//   プランク 20kg 30s      → 重量20kg・30秒
+export const MANUAL_INPUT_HELP = '形式：種目名 [重量kg] 回数／種目名 [重量kg] 秒数s（半角スペース区切り・半角英数字）。例「ベンチプレス 60kg 10」「プランク 30s」'
+
+// 手動入力の1行を種目オブジェクト（rowsToExercises と同じ形）へ変換。
+// 書式を満たさない場合は null を返す（= パフォーマンス記録表に反映しない）。
+export function parseManualLine(line) {
+  const raw = String(line || '').trim()
+  if (!raw) return null
+  if (/[　０-９]/.test(raw)) return null // 全角スペース・全角数字は不可
+  const parts = raw.split(' ').filter((s) => s !== '')
+  if (parts.length < 2) return null
+  const isMetric = (t) => /^\d+(\.\d+)?kg$/i.test(t) || /^\d+s$/i.test(t) || /^\d+$/.test(t)
+  // 末尾から連続する数値トークン（重量kg / 秒数s / 回数）を拾う
+  const metric = []
+  let i = parts.length - 1
+  while (i >= 1 && isMetric(parts[i])) { metric.unshift(parts[i]); i-- }
+  if (metric.length === 0) return null
+  const name = parts.slice(0, i + 1).join(' ').trim()
+  if (!name) return null
+  let weight = '', reps = '', seconds = ''
+  for (const t of metric) {
+    if (/kg$/i.test(t)) weight = Number(t.replace(/kg$/i, ''))
+    else if (/s$/i.test(t)) seconds = Number(t.replace(/s$/i, ''))
+    else reps = Number(t)
+  }
+  if (reps === '' && seconds === '') return null
+  const set = seconds !== '' ? { weight_kg: weight, seconds } : { weight_kg: weight, reps }
+  return { exercise_name: name, sets: [set] }
+}
+
+// 手動入力テキスト（複数行）を解析。{ exercises, invalid } を返す。
+// invalid に書式違反の行（行番号・原文）が入る。空行は無視。
+export function parseManualMenu(text) {
+  const lines = String(text || '').split(/\r?\n/)
+  const exercises = []
+  const invalid = []
+  lines.forEach((ln, idx) => {
+    if (!ln.trim()) return
+    const ex = parseManualLine(ln)
+    if (ex) exercises.push(ex)
+    else invalid.push({ line: idx + 1, text: ln.trim() })
+  })
+  return { exercises, invalid }
+}
+
 // 種目を1行テキストへ整形。
 // 通常: 「ベンチプレス 60kg×10回」「プランク 60秒」、HIIT: 「HIIT: バーピー 20kg 30秒, ももあげ 20秒」
 export function rowToLine(r) {

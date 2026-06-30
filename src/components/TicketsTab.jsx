@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Plus, Trash2, AlertTriangle, X } from 'lucide-react'
 import { fmtDate } from '../lib/format'
-import { TICKET_PLANS, TICKET_SPECS, ticketExpiry } from '../lib/plans'
+import { TICKET_PLANS, PURCHASE_PLANS, TICKET_SPECS, ticketExpiry, isSingleUse } from '../lib/plans'
 
 // 回数券タブ：購入履歴・残回数大表示・新規購入・残3回以下警告
 export default function TicketsTab({ memberId, onPurchased }) {
@@ -12,7 +12,9 @@ export default function TicketsTab({ memberId, onPurchased }) {
   useEffect(() => { load() }, [memberId])
 
   const remaining = tickets.reduce((s, t) => s + (t.remaining_count || 0), 0)
-  const low = remaining <= 3
+  // 単発利用のみの会員は残数アラートを出さない
+  const onlySingleUse = tickets.length > 0 && tickets.every((t) => t.single_use)
+  const low = remaining <= 3 && !onlySingleUse
 
   const remove = async (id) => {
     if (!confirm('この回数券を削除しますか？')) return
@@ -105,24 +107,33 @@ export function PurchaseModal({ memberId, memberName, onClose, onSaved }) {
 
   const save = async () => {
     setSaving(true)
-    await window.api.tickets.create({ member_id: memberId, ...form, notes: form.notes || form.plan })
+    await window.api.tickets.create({
+      member_id: memberId, ...form,
+      notes: form.notes || form.plan,
+      single_use: isSingleUse(form.plan) ? 1 : 0
+    })
     setSaving(false)
     onSaved()
   }
+
+  const single = isSingleUse(form.plan)
 
   return (
     <Overlay onClose={onClose}>
       <div className="w-full max-w-md rounded-xl border border-navy-600 bg-navy-800 p-6">
         <div className="mb-4 flex items-center justify-between">
-          <h3 className="text-lg font-bold">回数券の新規購入{memberName ? `：${memberName}` : ''}</h3>
+          <h3 className="text-lg font-bold">新規購入{memberName ? `：${memberName}` : ''}</h3>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-100"><X size={18} /></button>
         </div>
         <div className="grid grid-cols-2 gap-4">
-          <L label="回数券種別" full>
+          <L label="券種" full>
             <select value={form.plan} onChange={(e) => selectPlan(e.target.value)} className={inp}>
-              {TICKET_PLANS.map((p) => <option key={p} value={p}>{p}（{TICKET_SPECS[p].count}回 / ¥{TICKET_SPECS[p].price.toLocaleString()}）</option>)}
+              {PURCHASE_PLANS.map((p) => <option key={p} value={p}>{p}（{TICKET_SPECS[p].count}回 / ¥{TICKET_SPECS[p].price.toLocaleString()}）</option>)}
             </select>
           </L>
+          {single && (
+            <p className="col-span-2 -mt-1 text-xs text-accent">単発利用（1回・¥4,980）。残数アラートは表示されません。最終利用日から6ヶ月で退会アラートの対象になります。</p>
+          )}
           <L label="購入日"><input type="date" value={form.purchased_at} onChange={(e) => setPurchasedAt(e.target.value)} className={inp} /></L>
           <L label="枚数（回数）"><input type="number" min="1" value={form.total_count} onChange={(e) => set('total_count', e.target.value)} className={inp} /></L>
           <L label="有効期限（購入日+4ヶ月・自動／編集可）"><input type="date" value={form.expires_at} onChange={(e) => set('expires_at', e.target.value)} className={inp} /></L>

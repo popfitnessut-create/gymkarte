@@ -115,6 +115,11 @@ export default function EvaluationTab({ memberId, member, initialYm }) {
   const presetNames = useMemo(
     () => [...new Set(presets.map((p) => p.name).filter(Boolean))], [presets])
 
+  // セッション記録（手動入力含む）に登場した種目名。プリセット外でも記録表に反映できるよう候補に含める。
+  const perfNames = useMemo(() => Object.keys(perfMap), [perfMap])
+  const selectableNames = useMemo(
+    () => [...new Set([...presetNames, ...perfNames])], [presetNames, perfNames])
+
   // 自動反映用：種目の (year_month) 時点のセッション集計値
   const autoVals = (name, m) => perfMap[name]?.[m] || {}
   const autoRecord = (name, m) => {
@@ -293,8 +298,8 @@ export default function EvaluationTab({ memberId, member, initialYm }) {
   const months = monthOptions(24)
   const issuedSet = new Set(sheets.map((s) => s.year_month))
   const selectedCharts = selected.map(buildChart)
-  // 追加候補（未選択のプリセット種目）
-  const addOptions = presetNames.filter((n) => !selected.includes(n))
+  // 追加候補（未選択のプリセット種目＋記録に登場した種目）
+  const addOptions = selectableNames.filter((n) => !selected.includes(n))
 
   return (
     <div className="max-w-5xl">

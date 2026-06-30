@@ -8,10 +8,23 @@ export const PLAN_TYPES = [
 export const TICKET_PLANS = ['8回数券', '12回数券']
 export const MONTHLY_PLANS = ['ポッププラン', 'パワフルプラン', '特別プラン', 'スタートプラン']
 
+// 単発利用（1回のみ・¥4,980）。回数券タブの新規購入から選べる。
+// 残数アラートの対象外。最終利用日+6ヶ月で退会アラートの対象になる。
+export const SINGLE_USE_PLAN = '単発利用'
+
 // 回数券の規定回数と価格（新規購入時に自動反映）
 export const TICKET_SPECS = {
   '8回数券': { count: 8, price: 25600 },
-  '12回数券': { count: 12, price: 31800 }
+  '12回数券': { count: 12, price: 31800 },
+  '単発利用': { count: 1, price: 4980, single: true }
+}
+
+// 回数券タブの「新規購入」で選べる券種（単発利用を含む）
+export const PURCHASE_PLANS = [...TICKET_PLANS, SINGLE_USE_PLAN]
+
+// 単発利用かどうか（券種名で判定）
+export function isSingleUse(planName) {
+  return planName === SINGLE_USE_PLAN || !!(TICKET_SPECS[planName] && TICKET_SPECS[planName].single)
 }
 
 // 月の利用回数に上限があるプラン（残数に月の残り回数を反映）

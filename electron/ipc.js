@@ -3,6 +3,28 @@ const fs = require('fs')
 const path = require('path')
 const { getDb, getDbPath, getSyncStatus, writeSyncConfig, syncNow, flushSync } = require('./db')
 
+// 日付ユーティリティ（単発利用の退会予定日計算などで使用）
+// ISO日付(YYYY-MM-DD)に月を加算。加算先にその日が無ければ月末へ丸める。
+function addMonthsISO(iso, months) {
+  const m = String(iso || '').match(/^(\d{4})-(\d{2})-(\d{2})/)
+  if (!m) return null
+  const y = Number(m[1]); const mo = Number(m[2]); const d = Number(m[3])
+  const ti = (mo - 1) + months
+  const ty = y + Math.floor(ti / 12)
+  const tm = ((ti % 12) + 12) % 12
+  const last = new Date(ty, tm + 1, 0).getDate()
+  const td = Math.min(d, last)
+  const pad = (n) => String(n).padStart(2, '0')
+  return `${ty}-${pad(tm + 1)}-${pad(td)}`
+}
+// b - a を日数で返す（UTCで計算しタイムゾーンの影響を避ける）
+function daysBetweenISO(aISO, bISO) {
+  const a = Date.parse(aISO + 'T00:00:00Z')
+  const b = Date.parse(bISO + 'T00:00:00Z')
+  if (isNaN(a) || isNaN(b)) return 0
+  return Math.round((b - a) / 86400000)
+}
+
 // レンダラーから呼ばれるDB操作をIPCハンドラとして登録
 function registerIpc() {
   // 会員一覧（ステータスフィルタ任意）。残回数と最終来店日も付与
@@ -156,11 +178,52 @@ function registerIpc() {
     return { ok: true }
   })
 
+  // 単発利用会員の退会アラート。
+  // 最終利用日(=最後のセッション日。無ければ単発券の購入日)から6ヶ月後を退会予定日とし、
+  //  ・予定日の5日前〜前日 → state='upcoming'（退会予定日が近づいています）
+  //  ・予定日当日以降      → state='overdue'（退会処理が完了していません）
+  // 「コース削除実施済み」(single_use_removed_at) が記録されていれば対象外。
+  ipcMain.handle('members:singleUseAlerts', () => {
+    const db = getDb()
+    const today = new Date().toISOString().slice(0, 10)
+    const rows = db.prepare(`
+      SELECT m.id, m.name, m.furigana,
+        (SELECT MAX(substr(s.session_date,1,10)) FROM sessions s WHERE s.member_id = m.id) AS last_session,
+        (SELECT MAX(substr(t.purchased_at,1,10)) FROM tickets t WHERE t.member_id = m.id AND COALESCE(t.single_use,0)=1) AS last_purchase
+      FROM members m
+      WHERE m.status != 'withdrawn'
+        AND m.single_use_removed_at IS NULL
+        AND EXISTS (SELECT 1 FROM tickets ts WHERE ts.member_id = m.id AND COALESCE(ts.single_use,0)=1)
+    `).all()
+    const out = []
+    for (const r of rows) {
+      const lastUse = r.last_session || r.last_purchase
+      if (!lastUse) continue
+      const withdrawDate = addMonthsISO(lastUse, 6)
+      if (!withdrawDate) continue
+      const diff = daysBetweenISO(today, withdrawDate) // >0: 予定日は未来 / <=0: 当日以降
+      let state = null
+      if (diff <= 0) state = 'overdue'
+      else if (diff <= 5) state = 'upcoming'
+      if (!state) continue
+      out.push({ id: r.id, name: r.name, furigana: r.furigana, last_use: lastUse, withdraw_date: withdrawDate, state })
+    }
+    // 退会処理未完了（overdue）を上に
+    out.sort((a, b) => (a.state === b.state ? a.withdraw_date.localeCompare(b.withdraw_date) : a.state === 'overdue' ? -1 : 1))
+    return out
+  })
+
+  // 「コース削除実施済み」→ 退会アラートを止める
+  ipcMain.handle('members:setSingleUseRemoved', (_e, id) => {
+    getDb().prepare("UPDATE members SET single_use_removed_at = datetime('now','localtime') WHERE id = ?").run(id)
+    return { ok: true }
+  })
+
   // マスタ（トレーナー・種目プリセット）
   ipcMain.handle('trainers:list', () =>
     getDb().prepare('SELECT * FROM trainers WHERE active = 1 ORDER BY name').all())
   ipcMain.handle('presets:list', () =>
-    getDb().prepare('SELECT * FROM exercise_presets ORDER BY category, name').all())
+    getDb().prepare('SELECT * FROM exercise_presets ORDER BY (sort_order IS NULL), sort_order, id').all())
 
   registerTicketIpc()
   registerSessionIpc()
@@ -426,6 +489,14 @@ function registerSettingsIpc() {
     getDb().prepare('DELETE FROM exercise_presets WHERE id = ?').run(id)
     return { ok: true }
   })
+  // 並び替え：id配列を受け取り、その順で sort_order を 10刻みで振り直す
+  ipcMain.handle('presets:reorder', (_e, ids = []) => {
+    const db = getDb()
+    const upd = db.prepare('UPDATE exercise_presets SET sort_order = ? WHERE id = ?')
+    const tx = db.transaction(() => ids.forEach((id, i) => upd.run((i + 1) * 10, id)))
+    tx()
+    return { ok: true }
+  })
 }
 
 /* ===================== バックアップ ===================== */
@@ -606,13 +677,14 @@ function registerStatsIpc() {
       WHERE substr(s.session_date,1,10) = ?
       ORDER BY s.session_date DESC`).all(today)
 
-    // 残回数アラート（残3回以下・アクティブ会員のみ）
+    // 残回数アラート（残2回以下・アクティブの回数券会員のみ。単発利用会員は対象外）
     const lowTickets = db.prepare(`
       SELECT * FROM (
         SELECT m.id, m.name, m.furigana,
-          COALESCE((SELECT SUM(remaining_count) FROM tickets t WHERE t.member_id = m.id),0) AS remaining
+          COALESCE((SELECT SUM(remaining_count) FROM tickets t WHERE t.member_id = m.id AND COALESCE(t.single_use,0)=0),0) AS remaining
         FROM members m
         WHERE m.status = 'active' AND COALESCE(m.plan_type,'ticket') = 'ticket'
+          AND NOT EXISTS (SELECT 1 FROM tickets ts WHERE ts.member_id = m.id AND COALESCE(ts.single_use,0)=1)
       ) WHERE remaining <= 2
       ORDER BY remaining ASC`).all()
 
@@ -693,9 +765,10 @@ function registerTicketIpc() {
   ipcMain.handle('tickets:create', (_e, d) => {
     const db = getDb()
     const total = Number(d.total_count) || 0
+    const singleUse = d.single_use ? 1 : 0
     const info = db.prepare(`INSERT INTO tickets
-      (member_id, purchased_at, total_count, remaining_count, expires_at, price, notes)
-      VALUES (@member_id, @purchased_at, @total_count, @remaining_count, @expires_at, @price, @notes)`)
+      (member_id, purchased_at, total_count, remaining_count, expires_at, price, notes, single_use)
+      VALUES (@member_id, @purchased_at, @total_count, @remaining_count, @expires_at, @price, @notes, @single_use)`)
       .run({
         member_id: d.member_id,
         purchased_at: d.purchased_at ?? null,
@@ -703,8 +776,11 @@ function registerTicketIpc() {
         remaining_count: d.remaining_count != null ? Number(d.remaining_count) : total,
         expires_at: d.expires_at ?? null,
         price: d.price != null ? Number(d.price) : null,
-        notes: d.notes ?? null
+        notes: d.notes ?? null,
+        single_use: singleUse
       })
+    // 単発利用を新たに購入したら、過去の退会処理済みフラグをリセット（退会アラートの再スタート）
+    if (singleUse) db.prepare('UPDATE members SET single_use_removed_at = NULL WHERE id = ?').run(d.member_id)
     return db.prepare('SELECT * FROM tickets WHERE id = ?').get(info.lastInsertRowid)
   })
 
@@ -1035,6 +1111,15 @@ function procedureWindow(receivedAt) {
   return { start: new Date(Y, M + 1, 14), end: new Date(Y, M + 2, 12) }
 }
 
+// 休会開始日（自動）。受付が10日まで→翌月1日 / 11日以降→翌々月1日。
+function pauseStartFrom(receivedAt) {
+  const d = new Date(`${receivedAt}T00:00:00`)
+  const add = d.getDate() <= 10 ? 1 : 2
+  const base = new Date(d.getFullYear(), d.getMonth() + add, 1)
+  const pad = (n) => String(n).padStart(2, '0')
+  return `${base.getFullYear()}-${pad(base.getMonth() + 1)}-01`
+}
+
 // 入会日から今日までの満年数（誕生日方式：月日が来て初めて+1年）
 function elapsedYears(joinedAt, today) {
   const j = new Date(`${joinedAt}T00:00:00`)
@@ -1054,14 +1139,17 @@ function registerProcedureIpc() {
       ORDER BY p.received_at DESC, p.id DESC`).all()
   })
 
-  // 受付登録。{ member_id, type, received_at?(既定=今日), note? }
+  // 受付登録。{ member_id, type, received_at?(既定=今日), note?, pause_start?, pause_end? }
   ipcMain.handle('procedures:create', (_e, d = {}) => {
     const db = getDb()
     if (!d.member_id || !PROC_TYPES.includes(d.type)) return { ok: false, error: 'invalid_args' }
     const received = (d.received_at && String(d.received_at).slice(0, 10)) || new Date().toISOString().slice(0, 10)
     const ym = received.slice(0, 7)
-    const info = db.prepare(`INSERT INTO procedures (member_id, type, received_at, year_month, note)
-      VALUES (?, ?, ?, ?, ?)`).run(d.member_id, d.type, received, ym, d.note || null)
+    // 休会のみ休会開始日（自動）・終了日を保存。受付が10日まで→翌月1日、11日以降→翌々月1日。
+    const pauseStart = d.type === 'pause' ? (d.pause_start || pauseStartFrom(received)) : null
+    const pauseEnd = d.type === 'pause' ? (d.pause_end || null) : null
+    const info = db.prepare(`INSERT INTO procedures (member_id, type, received_at, year_month, note, pause_start, pause_end)
+      VALUES (?, ?, ?, ?, ?, ?, ?)`).run(d.member_id, d.type, received, ym, d.note || null, pauseStart, pauseEnd)
     return { ok: true, id: info.lastInsertRowid }
   })
 

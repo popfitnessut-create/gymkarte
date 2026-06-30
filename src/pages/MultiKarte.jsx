@@ -6,7 +6,7 @@ import { PurchaseModal } from '../components/TicketsTab'
 import { fmtDate } from '../lib/format'
 import {
   REP_OPTIONS, SECONDS_OPTIONS, isHiitName, makeNormalRow, makeHiitRow,
-  weightOptionsFor, rowsToExercises
+  weightOptionsFor, rowsToExercises, parseManualLine
 } from '../lib/exerciseRows'
 
 const today = () => new Date().toISOString().slice(0, 10)
@@ -107,7 +107,9 @@ export default function MultiKarte() {
   const buildSession = (m) => {
     const e = entries[m.id]
     const menuLines = (e.menuText || '').split('\n').map((l) => l.trim()).filter(Boolean)
-    const freeExercises = menuLines.map((line) => ({ exercise_name: line }))
+    // 規則的な書式（種目名 [重量kg] 回数/秒数s）の行は構造化して保存→記録表に反映。
+    // 書式外の行は従来どおり種目名のみで保存（記録表には反映されない）。
+    const freeExercises = menuLines.map((line) => parseManualLine(line) || { exercise_name: line })
     const structured = rowsToExercises(e.rows)
     const exercises = [...structured, ...freeExercises]
     const consume = m.plan_type === 'ticket' && e.consume_ticket
@@ -358,7 +360,7 @@ function Card({ member: m, entry: e, presets, saved, selected, selectedCount, on
             </div>
           </div>
           <textarea rows={3} value={e.menuText} onChange={(ev) => onUpd({ menuText: ev.target.value })}
-            placeholder={'1行1種目（手動入力可）\n例）ベンチプレス 60kg×3×10'}
+            placeholder={'1行1種目。記録表に反映する場合は「種目名 [重量kg] 回数/秒数s」\n例）ベンチプレス 60kg 10／プランク 30s'}
             className={`${cinp} font-mono leading-relaxed`} />
         </div>
 

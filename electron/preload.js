@@ -11,7 +11,9 @@ contextBridge.exposeInMainWorld('api', {
     cards: (ids) => ipcRenderer.invoke('members:cards', ids),
     reorder: (ids) => ipcRenderer.invoke('members:reorder', ids),
     billingPending: () => ipcRenderer.invoke('members:billingPending'),
-    setBillingDone: (id) => ipcRenderer.invoke('members:setBillingDone', id)
+    setBillingDone: (id) => ipcRenderer.invoke('members:setBillingDone', id),
+    singleUseAlerts: () => ipcRenderer.invoke('members:singleUseAlerts'),
+    setSingleUseRemoved: (id) => ipcRenderer.invoke('members:setSingleUseRemoved', id)
   },
   procedures: {
     list: () => ipcRenderer.invoke('procedures:list'),
@@ -35,7 +37,8 @@ contextBridge.exposeInMainWorld('api', {
     list: () => ipcRenderer.invoke('presets:list'),
     create: (data) => ipcRenderer.invoke('presets:create', data),
     update: (data) => ipcRenderer.invoke('presets:update', data),
-    remove: (id) => ipcRenderer.invoke('presets:delete', id)
+    remove: (id) => ipcRenderer.invoke('presets:delete', id),
+    reorder: (ids) => ipcRenderer.invoke('presets:reorder', ids)
   },
   settings: {
     get: () => ipcRenderer.invoke('settings:get'),
